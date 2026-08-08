@@ -138,6 +138,22 @@ internal static class BridgeStatus
         Changed?.Invoke();
     }
 
+    /// <summary>
+    /// The agent the Launch button targets (docs/MULTI-AGENT.md). The bridge itself serves EVERY
+    /// configured agent at once - one port, one lockfile per discovery dir, any registered auth header -
+    /// so this is purely "which CLI does Launch spawn now". Persisted across restarts via
+    /// <see cref="AgentProfile.SaveSelected"/> (a preference, not a safety gate).
+    /// </summary>
+    public static AgentProfile SelectedAgent { get; private set; } = AgentProfile.LoadSelected();
+
+    public static void SetSelectedAgent(AgentProfile agent)
+    {
+        if (ReferenceEquals(SelectedAgent, agent)) return;
+        SelectedAgent = agent;
+        AgentProfile.SaveSelected(agent); // best-effort; an unwritable preference must never break the picker
+        Changed?.Invoke();
+    }
+
     /// <summary>Set by BridgeHost so the panel's Launch button can start the CLI.</summary>
     public static Func<Task>? LaunchAction { get; set; }
 

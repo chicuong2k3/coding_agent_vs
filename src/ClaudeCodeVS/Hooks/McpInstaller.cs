@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using ClaudeCodeVs.Protocol;
@@ -39,7 +40,16 @@ internal static class McpInstaller
         }
         try
         {
-            var claudeDir = Path.Combine(workspaceRoot, agent.ConfigDirName);
+            // Where the shim lives. Agents that register into CLAUDE'S OWN .mcp.json (same file, same
+            // ClaudeMcpServers shape - Oh My Pi imports a workspace .mcp.json wholesale) reuse Claude's
+            // config dir, so the entry they write is byte-identical to Claude's: installing both agents
+            // never flips the file back and forth. Agents with their own config file (opencode.json)
+            // get their own dir.
+            var shimDir = agent.McpConfigFileName == AgentProfile.ClaudeCode.McpConfigFileName
+                          && agent.McpFormat == AgentProfile.ClaudeCode.McpFormat
+                ? AgentProfile.ClaudeCode.ConfigDirName
+                : agent.ConfigDirName;
+            var claudeDir = Path.Combine(workspaceRoot, shimDir);
             Directory.CreateDirectory(claudeDir);
 
             // 1) (Over)write the shim from the embedded copy, so updates ship with the extension.
@@ -111,7 +121,13 @@ internal static class McpInstaller
     /// </summary>
     private static JObject BuildEntry(AgentProfile agent, string[] extraArgs)
     {
-        var script = $"{agent.ConfigDirName}/{ShimScript}";
+        // Same sharing rule as EnsureInstalled: agents that register into Claude's .mcp.json reuse
+        // Claude's script path so the entries collide cleanly instead of flip-flopping.
+        var shimDir = agent.McpConfigFileName == AgentProfile.ClaudeCode.McpConfigFileName
+                      && agent.McpFormat == AgentProfile.ClaudeCode.McpFormat
+            ? AgentProfile.ClaudeCode.ConfigDirName
+            : agent.ConfigDirName;
+        var script = $"{shimDir}/{ShimScript}";
         var tail = new List<string>(extraArgs);
         if (agent.IdeDir is { Length: > 0 } dir && !string.Equals(dir, AgentProfile.ClaudeCode.IdeDir, StringComparison.OrdinalIgnoreCase))
         {

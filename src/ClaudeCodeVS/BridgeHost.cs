@@ -24,9 +24,10 @@ internal sealed class BridgeHost : IDisposable
     private readonly CancellationTokenSource _cts = new();
     private readonly DiffDecisions _decisions = new(); // shared by openDiff and the permission gate
 
-    // The agent this bridge serves (docs/MULTI-AGENT.md). Fixed to Claude Code today; the launch +
-    // lockfile paths below are already parameterized on it, so a second agent is a new profile here.
-    private readonly AgentProfile _agent = AgentProfile.ClaudeCode;
+    // The bridge serves EVERY configured agent at once (docs/MULTI-AGENT.md): one port, one auth
+    // token, a lockfile in each distinct discovery directory, and a WS server that accepts any
+    // registered agent's auth header. Which CLI the Launch button spawns is the SELECTED agent
+    // (AgentProfile.LoadSelected, app-local file); everything here is parameterized on it.
 
     private VsOutputLog? _log;
     private Lockfile? _lockfile;
@@ -64,18 +65,24 @@ internal sealed class BridgeHost : IDisposable
         Log.Info("Claude Code bridge starting…");
 
         // 2) Lockfile lifecycle: reap stale dead-PID files, then claim a free port. (build-plan §3)
-        Lockfile.ReapStale(_agent);
+        //    Served for ALL agents - one free port, one token, a lockfile in every distinct discovery
+        //    dir - so whichever agent the user launches finds a live bridge.
+        Lockfile.ReapStale(AgentProfile.All);
         var folders = await GetWorkspaceFoldersAsync();
-        _lockfile = Lockfile.CreateForFreePort(folders, _agent);
+        _lockfile = Lockfile.CreateForFreePort(folders, AgentProfile.All);
         Ui.BridgeStatus.SetEndpoint(_lockfile.Port, folders.Count > 0 ? folders[0] : null);
 
         // 3) Tool registry. The diff coordinator (_decisions) is shared between openDiff and the
         //    single-gate permission path.
         var tools = new ToolRegistry(BuildTools(_decisions));
-        var mcp = new McpServer(tools, _agent.McpServerName);
+        // Server name stays the bridge's own (claude-code-vs default) - the bridge is shared, not
+        // per-agent; each CLI only sees its name in the initialize response, which nobody depends on.
+        var mcp = new McpServer(tools);
 
-        // 4) Start the localhost WS server on the claimed port.
-        _server = new IdeWebSocketServer(_lockfile.Port, _lockfile.AuthToken, mcp, _agent);
+        // 4) Start the localhost WS server on the claimed port. Authenticates any agent's auth header
+        //    (Claude Code and opencode both present x-claude-code-ide-authorization) against the SAME
+        //    token, so one server serves every agent attached to this lockfile.
+        _server = new IdeWebSocketServer(_lockfile.Port, _lockfile.AuthToken, mcp, AgentProfile.All);
 
         // Let the selection tracker push selection_changed over this server.
         Editor.SelectionService.Attach(_server, ThreadHelper.JoinableTaskFactory);
@@ -98,7 +105,9 @@ internal sealed class BridgeHost : IDisposable
                 // Install-on-connect (marketplace feedback): a session that reaches the bridge without
                 // going through our Launch button (manual `claude` + /ide, a fresh clone whose committed
                 // settings.json references our hooks) used to hit "-File does not exist" on every prompt
-                // because the scripts were never materialized. Idempotent; runs off-thread.
+                // because the scripts were never materialized. Idempotent; runs off-thread. Installs for
+                // EVERY agent: each installer is self-gated by the agent's Supports* flags, so a connect
+                // from a manually-launched agent still finds its scripts.
                 _ = Task.Run(async () =>
                 {
                     try
@@ -106,8 +115,11 @@ internal sealed class BridgeHost : IDisposable
                         var ws = await GetWorkspaceRootAsync();
                         if (!string.IsNullOrEmpty(ws))
                         {
-                            Hooks.PermissionHookInstaller.EnsureInstalled(ws!, _agent);
-                            Hooks.McpInstaller.EnsureInstalled(ws!, _agent);
+                            foreach (var agent in AgentProfile.All)
+                            {
+                                Hooks.PermissionHookInstaller.EnsureInstalled(ws!, agent);
+                                Hooks.McpInstaller.EnsureInstalled(ws!, agent);
+                            }
                         }
                     }
                     catch (Exception e) { Log.Warn($"install-on-connect failed: {e.Message}"); }
@@ -542,13 +554,14 @@ internal sealed class BridgeHost : IDisposable
     }
 
     /// <summary>
-    /// T1 - launch the CLI in a terminal pre-wired to this bridge: a new console with
-    /// ENABLE_IDE_INTEGRATION + CLAUDE_CODE_SSE_PORT set and the working directory pinned to the
-    /// workspace root, so the CLI auto-connects (no /ide) and writes files into the right repo (fixes B2).
+    /// T1 - launch the SELECTED agent's CLI in a terminal pre-wired to this bridge: a new console with
+    /// the agent's env vars (ENABLE_IDE_INTEGRATION + port) set and the working directory pinned to the
+    /// workspace root, so it auto-connects (no /ide) and writes files into the right repo (fixes B2).
     /// Prefers VS's native docked Terminal; <paramref name="forceExternal"/> skips it for users who want
     /// a standalone console window (which, unlike the docked tab, survives closing VS).
     /// </summary>
-    public Task LaunchClaudeAsync(bool forceExternal = false) => LaunchAgentAsync(_agent, forceExternal);
+    public Task LaunchClaudeAsync(bool forceExternal = false) =>
+        LaunchAgentAsync(Ui.BridgeStatus.SelectedAgent, forceExternal);
 
     private async Task LaunchAgentAsync(AgentProfile agent, bool forceExternal)
     {
@@ -559,8 +572,9 @@ internal sealed class BridgeHost : IDisposable
         }
 
         // Reap zombie lockfiles (dead/recycled-PID instances) before launching, so the CLI's /ide and
-        // our hooks see only live bridges. Our own lockfile is alive, so it's never reaped.
-        Lockfile.ReapStale(agent);
+        // our hooks see only live bridges. Our own lockfile is alive, so it's never reaped. Reap across
+        // ALL agents' discovery dirs - the bridge serves every agent at once.
+        Lockfile.ReapStale(AgentProfile.All);
 
         string? workspace = await GetWorkspaceRootAsync();
 

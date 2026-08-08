@@ -161,7 +161,7 @@ internal static class PermissionHookInstaller
             ["hooks"] = new JArray(new JObject
             {
                 ["type"] = "command",
-                ["command"] = Command(configDir, script),
+                ["command"] = Command(configDir, script, discoveryArgs),
                 ["timeout"] = timeoutSeconds,
             }),
         };

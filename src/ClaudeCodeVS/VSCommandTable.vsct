@@ -18,7 +18,7 @@
       <Button guid="guidClaudeCmdSet" id="LaunchClaudeId" priority="0x0100" type="Button">
         <Parent guid="guidClaudeCmdSet" id="ClaudeMenuGroup" />
         <Strings>
-          <ButtonText>Launch Claude Code</ButtonText>
+          <ButtonText>Launch Agent</ButtonText>
         </Strings>
       </Button>
       <Button guid="guidClaudeCmdSet" id="ShowPanelId" priority="0x0101" type="Button">

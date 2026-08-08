@@ -123,9 +123,9 @@ This defeats: zombie lockfiles (dead process, port doesn't answer), recycled PID
 | Component | File(s) | Coupling | Generalization strategy |
 |---|---|---|---|
 | **Lockfile path** | `Lockfile.cs` | `~/.claude/ide/<port>.lock` | ✅ Done — `AgentProfile.IdeDir`, passed to `CreateForFreePort`/`ReapStale` |
-| **Lockfile schema** | `Lockfile.cs` | `ideName`, `transport: "ws"`, `authToken`, `workspaceFolders`, `runningInWindows` | Deliberately kept — this IS the IDE-protocol contract; an agent implementing the same protocol reads the same fields. Abstract only when a real second agent needs a different schema |
+| **Lockfile schema** | `Lockfile.cs` | `ideName`, `transport: "ws"`, `authToken`, `workspaceFolders`, `runningInWindows` | ✅ Kept — this IS the shared multi-agent contract now: opencode reads the same file/fields, and the bridge writes one lockfile per DISTINCT discovery dir (see "The lockfile is now a SHARED multi-agent contract" above) |
 | **WS subprotocol** | `IdeWebSocketServer.cs` | MUST echo `Sec-WebSocket-Protocol: mcp` | ✅ Already dynamic — echoes whatever subprotocol the client offers |
-| **Auth header** | `IdeWebSocketServer.cs` | `x-claude-code-ide-authorization` | ✅ Done — `AgentProfile.AuthHeader`, passed to the server ctor |
+| **Auth header** | `IdeWebSocketServer.cs` | `x-claude-code-ide-authorization` | ✅ Done — server accepts ANY registered `AgentProfile.AuthHeader`; one token gates all |
 | **MCP protocol version** | `McpServer.cs:17` | `2025-11-25` (echoed from client) | Already dynamic — echoes client's version |
 | **Server name** | `McpServer.cs` | `"claude-code-vs"` | ✅ Done — `AgentProfile.McpServerName` → `McpServer` ctor |
 | **Env vars** | `AgentProfile.cs` | `ENABLE_IDE_INTEGRATION`, `CLAUDE_CODE_SSE_PORT` | ✅ Done — `AgentProfile.EnvironmentFor(port)` |
@@ -135,7 +135,7 @@ This defeats: zombie lockfiles (dead process, port doesn't answer), recycled PID
 | **Hook contract** | `*.ps1` scripts | stdin JSON, stdout JSON, exit codes, specific field names (`permissionDecision`, `additionalContext`) | ⚙️ Gated behind `SupportsHooks` — per-agent script adapters when needed |
 | **Hook settings path** | `PermissionHookInstaller.cs` | `.claude/settings.json` | ✅ Done — `AgentProfile.ConfigDirName` + `SettingsFileName` |
 | **MCP registration** | `McpInstaller.cs` | `.mcp.json` with `type: "stdio"`, `command: "powershell"` | ✅ Path done (`McpConfigFileName`); format stays Claude's, `SupportsMcpRegistration=false` skips |
-| **Hook install dir** | `McpInstaller.cs` | `.claude/` workspace subdirectory | ✅ Done — `AgentProfile.ConfigDirName` |
+| **Hook install dir** | `McpInstaller.cs` | `.claude/` workspace subdirectory | ✅ Done — `AgentProfile.ConfigDirName`; agents registering into Claude's own `.mcp.json` (Oh My Pi) reuse Claude's dir so entries stay byte-identical |
 | **`ide_connected` notif** | Protocol | CLI sends after handshake | ✅ Already tolerant — receive-side; unknown notifications are ignored, absence is harmless |
 | **`at_mentioned` notif** | Protocol | `{filePath, lineStart?, lineEnd?}` → chip in composer | ⚙️ Send-side; an agent that ignores unknown notifications needs no change — gate only if one chokes |
 | **`closeAllDiffTabs`** | Protocol | CLI calls proactively on connect | ✅ Already tolerant — a tool the agent may or may not call |
@@ -178,16 +178,29 @@ Current state: everything is hardcoded for Claude Code. The refactoring would:
 
 The `IIdeTool` / `McpServer` / tool implementations remain untouched — they're the agent-agnostic core.
 
-### Status — profile layer shipped
+### Status — profiles shipped AND wired
 
 `AgentProfile` (`src/ClaudeCodeVS.Protocol/AgentProfile.cs`) is the flat one-class realization of the interface sketch above — every knob a second agent needs, with Claude Code as the default instance:
 
 - **Discovery/launch:** `IdeDir`, `Binary`, `EnvironmentFor(port)`, `DisplayName` — wired through `Lockfile`, `BridgeHost.LaunchAgentAsync`, `VsTerminalLauncher`
 - **Transport:** `AuthHeader` (→ `IdeWebSocketServer` ctor), `McpServerName` (→ `McpServer` ctor); WS subprotocol already echoes the client's offer
-- **Config surface:** `ConfigDirName`, `SettingsFileName`, `McpConfigFileName` (→ both installers)
+- **Config surface:** `ConfigDirName`, `SettingsFileName`, `McpConfigFileName` (+ `McpFormat`) — (→ both installers)
 - **Capability gates:** `SupportsHooks`, `SupportsMcpRegistration` — agents without those systems skip the installs cleanly
+- **Selection:** `All`, `ById`, `LoadSelected`/`SaveSelected` — the panel's agent picker persists the Launch target in `%LOCALAPPDATA%` (a preference, not a safety gate)
 
-A second agent is now: `new AgentProfile(...)` + swapping `BridgeHost._agent`. Deliberately NOT abstracted (wait for a real second agent's contract): the lockfile JSON schema, the hook event names + ps1 script contract, and the `.mcp.json` entry format — each is either the shared IDE-protocol contract itself or gated off by the capability flags.
+**The bridge serves every agent at once** (one port, one auth token, a lockfile in each distinct discovery dir — Claude Code and opencode share `~/.claude/ide`, so one file; the WS server accepts any registered auth header). The picker only decides which CLI `Launch` spawns. Three agents are shipped:
+
+| Agent | Profile | Channels | Diff gate |
+|---|---|---|---|
+| Claude Code | `AgentProfile.ClaudeCode` | WS IDE + hooks + .mcp.json | ✅ PreToolUse hook → native VS diff |
+| OpenCode | `AgentProfile.OpenCode` | WS IDE (same lockfile/header/MCP 2025-11-25) + opencode.json MCP | ⚙️ OFF — opt-in `docs/agents/opencode-vs-diff-gate.js` plugin |
+| Oh My Pi (`omp`) | `AgentProfile.OhMyPi` | .mcp.json MCP import only (stdio, no WS) | ⚙️ OFF — opt-in `docs/agents/omp-vs-diff-gate.ts` extension |
+
+Deliberately NOT abstracted (wait for a real second agent's hook/transport contract): the hook event names + ps1 script contract and the `.mcp.json` entry format — each is either the shared IDE-protocol contract itself or gated off by the capability flags.
+
+### The lockfile is now a SHARED multi-agent contract
+
+The lockfile JSON schema (`pid`, `pidStartTime`, `workspaceFolders`, `ideName`, `transport`, `runningInWindows`, `authToken`) is no longer Claude-only internals: **opencode is a consumer of the same file** — it scans the same `~/.claude/ide/*.lock` directory, filters the same `ideName`, and presents the same `authToken` header. Treat schema changes as breaking for every agent, and document them here.
 
 ---
 
@@ -207,20 +220,21 @@ A second agent is now: `new AgentProfile(...)` + swapping `BridgeHost._agent`. D
 
 1. Open a solution/project in VS 2026 (projects needed for diagnostics and semantic tools)
 2. **View > Other Windows > Claude Code** (also on Tools menu)
-3. Click **Launch Claude Code** — Claude opens in VS's docked Terminal window, auto-connected
+3. Pick the agent from the panel's **Agent** dropdown (persisted across restarts), then click **Launch** — the CLI opens in VS's docked Terminal window, auto-connected
 4. The panel pill turns green: **Connected**. No `/ide` needed.
-5. Ask Claude to make a change — edits open as native VS diffs with Accept/Reject/Reject+feedback
+5. Ask the agent to make a change — Claude Code edits open as native VS diffs; OpenCode/omp edits apply directly (diff gate is opt-in, see the `docs/agents/` stubs)
 
 ### Panel Controls
 
-| Toggle | Default | What it gates |
+| Control | Default | What it does |
 |---|---|---|
+| **Agent** dropdown | Claude Code | Which CLI the Launch button spawns. The bridge serves every agent at once; this only picks the launch target (persists across restarts) |
 | **Auto-accept (run wild)** | OFF | Applies edits without opening the diff |
-| **Allow Claude to drive debugger** | OFF | Continue/step/breakpoints/attach/break-on-thrown |
+| **Allow agent to drive debugger** | OFF | Continue/step/breakpoints/attach/break-on-thrown |
 | **Allow screen capture** | OFF | `vs_capture_window` / `vs_capture_screen` |
 | **Notify** | ON | In-IDE "turn finished" / "needs input" notifications |
 
-All safety toggles reset each session.
+All safety toggles reset each session; the agent selection is a preference and does not.
 
 ### Build from Source
 

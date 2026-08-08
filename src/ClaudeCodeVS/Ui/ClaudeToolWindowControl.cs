@@ -54,6 +54,11 @@ internal sealed class ClaudeToolWindowControl : UserControl
     private readonly CheckBox _allowDrive;
     private readonly CheckBox _allowCapture;
     private readonly CheckBox _notify;
+    private readonly ComboBox _agentPicker;
+    private readonly Button _launchButton;
+    private readonly Button _relaunchButton;
+    private readonly Border _agentLimitsCard;
+    private readonly TextBlock _agentLimitsText;
     private readonly ListBox _feed;
     private readonly WrapPanel _attachChips;
     private readonly Button _attachClear;
@@ -88,6 +93,20 @@ internal sealed class ClaudeToolWindowControl : UserControl
 
         _endpointLine = new TextBlock { FontSize = 11, Opacity = 0.65, TextTrimming = TextTrimming.CharacterEllipsis, Margin = new Thickness(0, 1, 0, 0) };
         header.Children.Add(_endpointLine);
+
+        // Per-agent limitations banner (shown only when the selected agent loses something vs Claude Code).
+        _agentLimitsText = new TextBlock { FontSize = 11.5, TextWrapping = TextWrapping.Wrap };
+        _agentLimitsText.SetResourceReference(ForegroundProperty, VsBrushes.ToolWindowTextKey);
+        _agentLimitsCard = new Border
+        {
+            Background = Chip,
+            CornerRadius = new CornerRadius(6),
+            Padding = new Thickness(10, 6, 10, 6),
+            Margin = new Thickness(0, 6, 0, 0),
+            Visibility = Visibility.Collapsed,
+            Child = _agentLimitsText,
+        };
+        header.Children.Add(_agentLimitsCard);
         Grid.SetRow(header, 0);
 
         // ---- Row 1: toolbar ----
@@ -98,9 +117,39 @@ internal sealed class ClaudeToolWindowControl : UserControl
         right.Children.Add(MakeButton("Output", () => { try { BridgeStatus.ShowOutputAction?.Invoke(); } catch { } }));
 
         var left = new StackPanel { Orientation = Orientation.Horizontal };
-        left.Children.Add(MakeButton("Launch Claude Code", () => { _ = BridgeStatus.LaunchAction?.Invoke(); }));
+
+        // Agent picker (multi-agent, docs/MULTI-AGENT.md): which CLI the Launch button spawns. The bridge
+        // itself serves every agent at once - this only picks the launch target. Persisted across restarts.
+        var pickerLabel = new TextBlock
+        {
+            Text = "Agent:",
+            FontSize = 12,
+            VerticalAlignment = VerticalAlignment.Center,
+            Margin = new Thickness(0, 0, 4, 0),
+        };
+        pickerLabel.SetResourceReference(ForegroundProperty, VsBrushes.ToolWindowTextKey);
+        _agentPicker = new ComboBox
+        {
+            ItemsSource = AgentProfile.All,
+            DisplayMemberPath = nameof(AgentProfile.DisplayName),
+            SelectedItem = BridgeStatus.SelectedAgent,
+            MinWidth = 110,
+            MaxWidth = 170,
+            Margin = new Thickness(0, 0, 8, 0),
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        _agentPicker.SelectionChanged += (s, e) =>
+        {
+            if (e.AddedItems.Count == 1 && e.AddedItems[0] is AgentProfile a)
+                BridgeStatus.SetSelectedAgent(a);
+        };
+        left.Children.Add(pickerLabel);
+        left.Children.Add(_agentPicker);
+
+        _launchButton = MakeButton("Launch agent", () => { _ = BridgeStatus.LaunchAction?.Invoke(); });
+        left.Children.Add(_launchButton);
         var launchExternal = MakeButton("External console", () => { _ = BridgeStatus.LaunchExternalAction?.Invoke(); });
-        launchExternal.ToolTip = "Launch Claude Code in a separate console window instead of the docked terminal. Unlike the docked tab, it survives closing Visual Studio.";
+        launchExternal.ToolTip = "Launch the selected agent in a separate console window instead of the docked terminal. Unlike the docked tab, it survives closing Visual Studio.";
         left.Children.Add(launchExternal);
 
         // The toggles get their own WRAPPING row: four checkboxes stopped fitting beside the buttons at
@@ -119,12 +168,12 @@ internal sealed class ClaudeToolWindowControl : UserControl
         _autoAccept.SetResourceReference(ForegroundProperty, VsBrushes.ToolWindowTextKey); // else label is black-on-dark
         toggles.Children.Add(_autoAccept);
 
-        // Phase 3 gate: lets Claude continue/step/set-breakpoints while paused. Default OFF, resets each
+        // Phase 3 gate: lets the agent continue/step/set-breakpoints while paused. Default OFF, resets each
         // session (same in-memory safety model as auto-accept) - model-controlled execution is opt-in.
         _allowDrive = new CheckBox
         {
-            Content = "Allow Claude to drive debugger",
-            ToolTip = "Let Claude continue/step and set breakpoints while paused. Resets when VS restarts.",
+            Content = "Allow agent to drive debugger",
+            ToolTip = "Let the agent continue/step and set breakpoints while paused. Resets when VS restarts.",
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(0, 0, 14, 2),
         };
@@ -133,13 +182,13 @@ internal sealed class ClaudeToolWindowControl : UserControl
         _allowDrive.SetResourceReference(ForegroundProperty, VsBrushes.ToolWindowTextKey);
         toggles.Children.Add(_allowDrive);
 
-        // Capture gate: lets Claude screenshot the debuggee / a window by title / the screen into the
-        // attachment tray. Same in-memory opt-in model as the drive toggle - what Claude can SEE of your
+        // Capture gate: lets the agent screenshot the debuggee / a window by title / the screen into the
+        // attachment tray. Same in-memory opt-in model as the drive toggle - what the agent can SEE of your
         // desktop is a safety decision, so it is never left on across sessions.
         _allowCapture = new CheckBox
         {
             Content = "Allow screen capture",
-            ToolTip = "Let Claude capture the debugged app's window, a window by title (e.g. your browser), or the screen as image attachments. Every capture is logged and staged as a visible chip. Resets when VS restarts.",
+            ToolTip = "Let the agent capture the debugged app's window, a window by title (e.g. your browser), or the screen as image attachments. Every capture is logged and staged as a visible chip. Resets when VS restarts.",
             VerticalAlignment = VerticalAlignment.Center,
             Margin = new Thickness(0, 0, 14, 2),
         };
@@ -187,7 +236,8 @@ internal sealed class ClaudeToolWindowControl : UserControl
         _toolsWarningText = new TextBlock { FontSize = 11.5, Opacity = 0.85, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 3, 0, 0) };
         warnStack.Children.Add(_toolsWarningText);
         var warnButtons = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 6, 0, 0) };
-        warnButtons.Children.Add(MakeButton("Relaunch Claude Code", () => { _ = BridgeStatus.LaunchAction?.Invoke(); }));
+        _relaunchButton = MakeButton("Relaunch agent", () => { _ = BridgeStatus.LaunchAction?.Invoke(); });
+        warnButtons.Children.Add(_relaunchButton);
         warnStack.Children.Add(warnButtons);
         _toolsWarningCard = new Border
         {
@@ -401,6 +451,24 @@ internal sealed class ClaudeToolWindowControl : UserControl
         if (_notify.IsChecked != BridgeStatus.NotifyEnabled)
             _notify.IsChecked = BridgeStatus.NotifyEnabled;
 
+        // Multi-agent: keep the picker, the Launch label, and the limitations banner in sync with the
+        // persisted selection (the picker is the only writer, but LoadSelected restores it at startup,
+        // and the picker must never silently drift from what Launch actually spawns).
+        var agent = BridgeStatus.SelectedAgent;
+        if (!ReferenceEquals(_agentPicker.SelectedItem, agent))
+            _agentPicker.SelectedItem = agent;
+        _launchButton.Content = $"Launch {agent.DisplayName}";
+        _relaunchButton.Content = $"Relaunch {agent.DisplayName}";
+        if (agent.Limitations is string limitations)
+        {
+            _agentLimitsText.Text = $"{agent.DisplayName}: {limitations}";
+            _agentLimitsCard.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            _agentLimitsCard.Visibility = Visibility.Collapsed;
+        }
+
         // Status pill.
         if (BridgeStatus.Port is not int port)
         {
@@ -481,8 +549,8 @@ internal sealed class ClaudeToolWindowControl : UserControl
         if (BridgeStatus.ToolsWarning && BridgeStatus.Connected)
         {
             _toolsWarningText.Text =
-                "Claude connected, but the vs-debug / vs-semantic / test tools aren't available this session. " +
-                "Usually Claude was launched outside the solution folder" +
+                "The agent connected, but the vs-debug / vs-semantic / test tools aren't available this session. " +
+                "Usually the agent was launched outside the solution folder" +
                 (string.IsNullOrEmpty(BridgeStatus.Workspace) ? "" : $" ({BridgeStatus.Workspace})") +
                 ", or the project MCP servers weren't approved. Relaunch from here (pins the right folder), " +
                 "then approve the vs-debug / vs-semantic servers if prompted.";
