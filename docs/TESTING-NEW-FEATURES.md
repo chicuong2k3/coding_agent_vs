@@ -1,13 +1,13 @@
-# Checklist test TOÀN BỘ tính năng (đến 1.18.0)
+# Full Feature Test Checklist (through 1.18.0)
 
-Từng tính năng một — làm gì, prompt mẫu gõ cho Claude, và tiêu chí **Đạt**. Tính năng mới (1.16→1.18) đánh dấu 🆕.
+One feature at a time — what to do, a sample prompt to give Claude, and the **Pass** criteria. New items (1.16→1.18) are marked 🆕.
 
-**Chuẩn bị chung:**
-1. Cài `.vsix` mới nhất ([Releases](https://github.com/chicuong2k3/coding_agent_vs/releases)) hoặc build local: `msbuild src/ClaudeCodeVS/ClaudeCodeVS.csproj /restore /t:Build /p:Configuration=Release`.
-2. Mở solution demo phù hợp từng mục (ghi trong từng mục): `demo/TestLab` (test), `demo/RefMaze` (semantic), `demo/CheckoutBuggy`/`ComboScore` (debug cơ bản), `demo/LockJam` (deadlock), `demo/WebQuote` (attach/web), `demo/AsyncTrace` (async), `demo/SignalScan` (CPU).
-3. **View > Other Windows > Claude Code** → **Launch Claude Code** → pill xanh **Connected**.
-4. Tool `vs_*` gọi qua Claude bằng yêu cầu tự nhiên, hoặc nói thẳng "gọi tool X với tham số Y".
-5. Test profiling (mục H) cần cài 3 CLI một lần — **mỗi cái một lệnh riêng**:
+**Common setup:**
+1. Install the latest `.vsix` ([Releases](https://github.com/chicuong2k3/coding_agent_vs/releases)) or build locally: `msbuild src/ClaudeCodeVS/ClaudeCodeVS.csproj /restore /t:Build /p:Configuration=Release`.
+2. Open the demo solution each section calls for: `demo/TestLab` (tests), `demo/RefMaze` (semantic), `demo/CheckoutBuggy`/`ComboScore` (basic debugging), `demo/LockJam` (deadlock), `demo/WebQuote` (attach/web), `demo/AsyncTrace` (async), `demo/SignalScan` (CPU).
+3. **View > Other Windows > Claude Code** → **Launch Claude Code** → the pill turns green **Connected**.
+4. Invoke `vs_*` tools through Claude with natural requests, or say "call tool X with parameters Y" directly.
+5. Profiling (section H) needs three CLIs installed once — **one `dotnet tool install` per package**:
    ```powershell
    dotnet tool install -g dotnet-counters
    dotnet tool install -g dotnet-trace
@@ -16,227 +16,227 @@ Từng tính năng một — làm gì, prompt mẫu gõ cho Claude, và tiêu ch
 
 ---
 
-## A. Lõi bridge + diff (trải nghiệm chính)
+## A. Core bridge + diff (the main experience)
 
-### A1. Launch + auto-connect (terminal docked)
-Bấm **Launch Claude Code**. **Đạt:** `claude` mở trong tab Terminal docked của VS (không phải cửa sổ ngoài), pill panel chuyển xanh **Connected** mà KHÔNG cần gõ `/ide`.
+### A1. Launch + auto-connect (docked terminal)
+Click **Launch Claude Code**. **Pass:** `claude` opens in a docked VS Terminal tab (not an external window), the panel pill turns green **Connected** with NO `/ide` needed.
 
 ### A2. External console
-Bấm **External console**. **Đạt:** `claude` mở trong cửa sổ cmd riêng, vẫn tự connect; đóng VS thì cửa sổ này sống tiếp.
+Click **External console**. **Pass:** `claude` opens in its own cmd window, still auto-connects; the window survives closing VS.
 
 ### A3. Diff Accept
-Bảo Claude: *"Thêm comment vào đầu file Program.cs."* **Đạt:** diff mở NATIVE trong VS, bấm **Accept** → file được ghi, feed panel ghi nhận ✓.
+Tell Claude: *"Add a comment at the top of Program.cs."* **Pass:** the diff opens NATIVELY in VS; clicking **Accept** writes the file; the panel feed records ✓.
 
 ### A4. Diff Reject
-Như A3 nhưng bấm **Reject**. **Đạt:** file KHÔNG đổi, Claude nhận biết bị từ chối.
+Same as A3 but click **Reject**. **Pass:** the file is UNCHANGED and Claude knows it was rejected.
 
-### A5. Reject với lý do
-Bấm **Reject with feedback**, gõ lý do (vd "đặt tên biến khác"). **Đạt:** Claude đọc được lý do và sửa lại theo.
+### A5. Reject with feedback
+Click **Reject with feedback**, type a reason (e.g. "use a different variable name"). **Pass:** Claude reads the reason and redoes the edit accordingly.
 
 ### A6. Auto-accept (run wild)
-Bật toggle **Auto-accept**. Bảo Claude sửa file. **Đạt:** edit áp thẳng, KHÔNG mở diff; tắt toggle thì diff quay lại. Restart VS → toggle tự về OFF.
+Enable the **Auto-accept** toggle. Ask Claude for an edit. **Pass:** the edit applies directly, NO diff opens; disabling the toggle brings the diff back. Restart VS → the toggle resets to OFF.
 
-### A7. Bỏ qua gate cho file scratch của Claude (1.14.4)
-Bảo Claude ghi memory / tạo file tạm (vd "lưu điều này vào memory của bạn"). **Đạt:** KHÔNG mở diff (feed có dòng skip); nhưng mọi file trong workspace vẫn mở diff bình thường.
+### A7. Gate skipped for Claude's own scratch files (1.14.4)
+Ask Claude to write to its memory / create a temp file (e.g. "save this to your memory"). **Pass:** NO diff opens (the feed shows a skip line); but every file inside the workspace still opens a diff normally.
 
 ### A8. Selection context
-Bôi đen vài dòng code rồi hỏi: *"Đoạn tôi đang chọn làm gì?"* **Đạt:** Claude trả lời đúng đoạn đó mà bạn không cần dán code.
+Select a few lines of code, then ask: *"What does the code I have selected do?"* **Pass:** Claude answers about exactly that code without you pasting anything.
 
-### A9. getDiagnostics — 🆕 span chính xác (1.16)
-Gây lỗi compile C# (vd `intt x = 5;`), đợi Error List hiện. Hỏi: *"Có lỗi compile nào không?"* **Đạt:** kết quả có `range.start` ≠ `range.end` phủ đúng token lỗi, `"code": "CS0246"`, `"source": "roslyn"`. File C++ (nếu có): vẫn ra nhưng point-range — đúng thiết kế.
+### A9. getDiagnostics — 🆕 precise spans (1.16)
+Introduce a C# compile error (e.g. `intt x = 5;`), wait for the Error List. Ask: *"Any compile errors?"* **Pass:** the result has `range.start` ≠ `range.end` covering exactly the bad token, `"code": "CS0246"`, `"source": "roslyn"`. A C++ file (if any) still returns entries but with point ranges — by design.
 
 ### A10. Panel
-Nhìn panel trong khi làm các mục trên. **Đạt:** pill status đúng trạng thái; feed có dòng curated; counters Edits ✓/✗ và Debugger inspected/driven tăng đúng; card token có Latest/Session; nút **≈ Show est. cost** hiện cost; strip "Awaiting your review" hiện khi diff đang chờ.
+Watch the panel while doing the items above. **Pass:** the status pill matches the state; the feed shows curated lines; the Edits ✓/✗ and Debugger inspected/driven counters increment correctly; the token card shows Latest/Session; the **≈ Show est. cost** button reveals cost; the "Awaiting your review" strip appears while a diff is pending.
 
-### A11. 🆕 Dòng usage breakdown (1.18)
-Chạy một lượt dùng nhiều tool (bảo Claude đọc vài file, gọi vs_debug_state) và một lượt có subagent (*"dùng agent tìm giúp tôi X"*). **Đạt:** dưới dòng Session xuất hiện dòng mờ `Subagents (exact): N calls · ↑… ↓…   Top tools (est.): Read ≈40k · …`; không dùng thì ẩn.
+### A11. 🆕 Usage breakdown line (1.18)
+Run one turn that uses many tools (have Claude read several files, call vs_debug_state) and one turn with a subagent (*"use an agent to find X for me"*). **Pass:** a dim line appears below Session: `Subagents (exact): N calls · ↑… ↓…   Top tools (est.): Read ≈40k · …`; it stays hidden when neither was used.
 
 ### A12. Notifications
-Để VS xuống background (mở app khác), bảo Claude làm việc gì đó dài. **Đạt:** khi xong lượt → InfoBar "Claude finished" + taskbar nháy; khi Claude cần input (permission prompt trong terminal) → notification "needs your input". Tắt toggle **Notify** → im lặng.
+Put VS in the background (switch to another app), give Claude a long task. **Pass:** when the turn finishes → a "Claude finished" InfoBar + taskbar flash; when Claude needs input (a permission prompt in the terminal) → a "needs your input" notification. Turning the **Notify** toggle off silences both.
 
 ### A13. Attachments tray
-Chụp màn hình (Win+Shift+S) → bấm **Paste** trên panel; kéo-thả 1 file từ Explorer. **Đạt:** chip hiện trên tray kèm ước lượng token; chip `@` tự chèn vào ô nhập của CLI (chỉ chèn, không gửi); Claude đọc được ảnh thật; click chip = re-mention; ✕ = gỡ. File xlsx/zip vẫn attach được (nhãn 🧰). Bản staged nằm trong `.claude/attachments/` có gitignore.
+Take a screenshot (Win+Shift+S) → click **Paste** on the panel; also drag-drop a file from Explorer. **Pass:** a chip appears in the tray with a token estimate; an `@` reference lands in the CLI's input box (inserted, NOT submitted); Claude can actually see the image; clicking a chip re-mentions it; ✕ removes it. xlsx/zip files attach too (🧰 label). Staged copies live in a gitignored `.claude/attachments/`.
 
 ### A14. Reconnect hardening
-Đang có diff chờ → đóng hẳn terminal `claude`. **Đạt:** diff mồ côi tự reject + đóng. Mở lại `claude` → tự reconnect với đúng bridge (không cần restart VS).
+With a diff pending, kill the `claude` terminal entirely. **Pass:** the orphaned diff auto-rejects and closes. Relaunch `claude` → it reconnects to the same bridge (no VS restart needed).
 
 ---
 
-## B. Debugger — ĐỌC (vs-debug, không cần bật toggle)
+## B. Debugger — READ (vs-debug, no toggle needed)
 
-Fixture: `demo/CheckoutBuggy` hoặc `demo/ComboScore`, F5 và dừng ở breakpoint.
+Fixture: `demo/CheckoutBuggy` or `demo/ComboScore`, F5 and stop at a breakpoint.
 
-### B1. Push context khi break
-Đang dừng ở breakpoint, gõ prompt bất kỳ cho Claude. **Đạt:** Claude tự biết đang dừng ở đâu (file/line/stack/locals) mà bạn không dán gì — context được bơm lúc submit.
+### B1. Push context at break
+While paused at a breakpoint, type any prompt to Claude. **Pass:** Claude already knows where you're stopped (file/line/stack/locals) without you pasting anything — the context is injected at prompt submit.
 
 ### B2. vs_debug_state — 🆕 per-frame file/line (1.18)
-*"Trạng thái debug hiện tại?"* **Đạt:** mode/stoppedAt/callStack/locals; **từng frame code-của-bạn có `file` + `line`** (frame framework name-only là đúng).
+*"What's the current debug state?"* **Pass:** mode/stoppedAt/callStack/locals; **every your-code frame carries `file` + `line`** (framework frames staying name-only is correct).
 
 ### B3. vs_evaluate / vs_expand / vs_get_frame_locals
-*"Giá trị của biến X? Mở rộng object Y. Locals của frame 2?"* **Đạt:** giá trị đúng; expand ra property con; `threadId` khác đọc được locals thread khác.
+*"What's the value of X? Expand object Y. Locals of frame 2?"* **Pass:** correct values; expand walks into child properties; a different `threadId` reads another thread's locals.
 
-### B4. vs_threads — 🆕 hậu tố (file:line) (1.18)
-*"Liệt kê threads."* **Đạt:** mỗi thread có stack; frame có ` (path\file.cs:42)` khi có symbol; thread chờ lock có cờ + `lockOwnerThreadId` (thấy rõ với LockJam).
+### B4. vs_threads — 🆕 (file:line) suffix (1.18)
+*"List the threads."* **Pass:** each thread has a stack; frames carry ` (path\file.cs:42)` where symbols exist; a lock-waiting thread is flagged with `lockOwnerThreadId` (clearest with LockJam).
 
 ### B5. vs_exception
-Break tại một throw (hoặc `$exception` trong catch). *"Exception hiện tại là gì?"* **Đạt:** type + message + stack của exception.
+Break at a throw (or with `$exception` in a catch). *"What's the current exception?"* **Pass:** type + message + stack of the exception.
 
 ### B6. vs_list_breakpoints / vs_list_processes
-**Đạt:** danh sách breakpoint khớp cửa sổ Breakpoints; list processes ra các process attach được.
+**Pass:** the breakpoint list matches VS's Breakpoints window; list processes returns attachable processes.
 
-### B7. Bộ ClrMD (cần app .NET đang chạy dưới debugger)
-- `vs_wait_chains` (LockJam): chuỗi sở hữu monitor + deadlock suspects.
-- `vs_async_stacks` (AsyncTrace): stack async logical.
-- `vs_heap_stats`: thành phần heap + GC health.
-- `vs_threadpool`: số thread + backlog + cảnh báo starvation.
-- `vs_gc_roots <type>`: đường retention (vì sao object còn sống).
-- `vs_heap_diff`: baseline → thao tác → diff ra type tăng (tìm leak).
-**Đạt:** mỗi tool trả JSON cấu trúc, không lỗi; kết quả lớn có `truncated:true`.
+### B7. The ClrMD suite (needs a .NET app running under the debugger)
+- `vs_wait_chains` (LockJam): monitor ownership chains + deadlock suspects.
+- `vs_async_stacks` (AsyncTrace): logical async stacks.
+- `vs_heap_stats`: heap composition + GC health.
+- `vs_threadpool`: thread counts + backlog + starvation warning.
+- `vs_gc_roots <type>`: retention path (why an object is alive).
+- `vs_heap_diff`: baseline → act → diff shows the growing types (leak finder).
+**Pass:** each tool returns structured JSON without errors; large results carry `truncated:true`.
 
 ---
 
-## C. Debugger — LÁI (bật toggle "Allow Claude to drive debugger")
+## C. Debugger — DRIVE (enable "Allow Claude to drive debugger")
 
 ### C1. Gate
-Toggle OFF → gọi tool drive bất kỳ. **Đạt:** từ chối rõ ràng kèm hint bật toggle. Restart VS → toggle tự OFF.
+Toggle OFF → call any drive tool. **Pass:** a clear refusal with a hint to enable the toggle. Restart VS → the toggle resets to OFF.
 
 ### C2. continue / step over / into / out / run_to_line
-*"Step over 2 lần rồi cho biết locals thay đổi gì."* **Đạt:** mỗi lệnh trả về vị trí break MỚI (chờ được break kế tiếp, không treo UI).
+*"Step over twice and tell me what changed in the locals."* **Pass:** each command returns the NEW break position (it awaits the next break; the UI never hangs).
 
 ### C3. vs_break_all (LockJam)
-App đang treo deadlock (không breakpoint nào hit). *"App treo rồi, pause nó xem sao."* **Đạt:** app dừng giữa chừng, sau đó vs_threads/vs_wait_chains lần ra cycle.
+The app is hung in a deadlock (no breakpoint will ever hit). *"The app is hung — pause it and look."* **Pass:** the app stops mid-run; vs_threads/vs_wait_chains then walk the cycle.
 
 ### C4. set/remove breakpoint
-Theo file:line VÀ theo tên hàm; thử kèm `condition`, `hitCount`. **Đạt:** breakpoint hiện trong cửa sổ Breakpoints, hit đúng điều kiện.
+By file:line AND by function name; try `condition` and `hitCount` too. **Pass:** the breakpoint appears in the Breakpoints window and hits under the right condition.
 
 ### C5. vs_break_on_thrown (WebQuote)
-*"Break ngay tại chỗ ném FooException."* **Đạt:** dừng ở THROW site (first-chance), không phải ở catch.
+*"Break right where FooException is thrown."* **Pass:** stops at the THROW site (first-chance), not at the catch.
 
 ### C6. freeze_thread / set_next_statement
-**Đạt:** thread đóng băng không chạy tiếp; set-next dời con trỏ thực thi (vàng) sang dòng chỉ định.
+**Pass:** a frozen thread stops advancing; set-next moves the execution pointer (yellow arrow) to the given line.
 
 ### C7. start/stop_debugging + attach/detach (WebQuote)
-*"Attach vào process WebQuote đang chạy."* **Đạt:** attach không cần F5; detach xong app vẫn chạy; start = F5 tới break đầu; stop = Shift+F5.
+*"Attach to the running WebQuote process."* **Pass:** attach works without F5; after detach the app keeps running; start = F5 to first break; stop = Shift+F5.
 
 ### C8. 🆕 Tracepoints (1.17)
-App chạy dưới debugger có vòng lặp. *"Đặt tracepoint tại file:line ghi `item.Price` và `total`, maxHits 5."* **Đạt:** app KHÔNG dừng hẳn (chỉ khựng nhẹ); `vs_get_tracepoint` ra timeline `[{seq,time,values}]`; đủ 5 hit → `exhausted:true`, hết khựng; `vs_remove_tracepoint` xoá breakpoint khỏi VS.
+An app with a loop running under the debugger. *"Set a tracepoint at file:line logging `item.Price` and `total`, maxHits 5."* **Pass:** the app does NOT halt (barely hiccups); `vs_get_tracepoint` returns a `[{seq,time,values}]` timeline; after 5 hits → `exhausted:true` and the hiccups stop; `vs_remove_tracepoint` deletes the breakpoint from VS.
 
 ---
 
-## D. Data breakpoints (Concord; x64; bật toggle drive)
+## D. Data breakpoints (Concord; x64; drive toggle on)
 
 ### D1. vs_set_data_breakpoint
-Đang break, watch một INSTANCE field: *"Watch owner.field, báo mỗi lần nó đổi."* **Đạt:** chạy tiếp → mỗi mutation ghi vào timeline; `stopOnChange:true` → VS dừng ngay sau statement ghi; `vs_get_data_changes` ra `[{previous,current,type}]`; `vs_remove_data_breakpoint` disarm. Static/local/struct field → từ chối có giải thích (đúng thiết kế).
+While at a break, watch an INSTANCE field: *"Watch owner.field and report every change."* **Pass:** on continue, every mutation lands in the timeline; `stopOnChange:true` halts VS right after the writing statement; `vs_get_data_changes` returns `[{previous,current,type}]`; `vs_remove_data_breakpoint` disarms. Static/local/struct fields → a refusal with an explanation (by design).
 
 ---
 
-## E. Semantic (vs-semantic; cần solution C#/VB load xong; fixture `demo/RefMaze`)
+## E. Semantic (vs-semantic; needs a loaded C#/VB solution; fixture `demo/RefMaze`)
 
 ### E1. vs_search_symbols
-*"Tìm symbol tên Process."* **Đạt:** danh sách candidates, mỗi cái có `symbolId` (dạng `M:Ns.Type.Method(...)`).
+*"Find symbols named Process."* **Pass:** a candidate list where each entry has a `symbolId` (like `M:Ns.Type.Method(...)`).
 
 ### E2. vs_find_references
-*"Ai dùng IHandler.Process?"* **Đạt:** ra CẢ các call qua interface-dispatch + explicit implementation (grep miss các case này), kèm file:line:column + snippet.
+*"Who uses IHandler.Process?"* **Pass:** includes interface-dispatched calls AND the explicit implementation (the cases grep misses), each as file:line:column + snippet.
 
 ### E3. vs_go_to_definition
-Hỏi theo `file`+`line` giữa một overload set. **Đạt:** ra ĐÚNG MỘT overload đang được gọi, không phải cả cụm.
+Ask by `file`+`line` inside an overload set. **Pass:** resolves to EXACTLY the one overload being called, not the whole group.
 
 ### E4. vs_find_implementations
-*"Những class nào implement IHandler?"* **Đạt:** đủ 3 impl của RefMaze, gồm cả explicit implementation.
+*"Which classes implement IHandler?"* **Pass:** all 3 RefMaze implementations, including the explicit one.
 
-### E5. vs_call_hierarchy — 🆕 callees transitive (1.17)
-Callers: *"Ai gọi (gián tiếp) tới X?"* → cây callers nhiều tầng, đệ quy có `recursionElided`. Callees: *"X gọi những gì, và tiếp nữa?"* → **cây callee lồng nhau** (không còn phẳng depth-1), có `maxDepth`.
+### E5. vs_call_hierarchy — 🆕 transitive callees (1.17)
+Callers: *"Who (transitively) calls X?"* → a multi-level caller tree, recursion marked `recursionElided`. Callees: *"What does X call, and what do those call?"* → a **nested callee tree** (no longer flat depth-1), with `maxDepth`.
 
 ### E6. vs_type_hierarchy
-**Đạt:** base chain + interfaces, và derived types.
+**Pass:** base chain + interfaces, and derived types.
 
 ### E7. vs_get_selection
-Bôi đen một identifier → *"Tôi đang chọn gì? Navigate từ nó."* **Đạt:** trả text chọn + `symbolId` tại vị trí đó.
+Select an identifier → *"What do I have selected? Navigate from it."* **Pass:** returns the selected text + the `symbolId` at that position.
 
 ### E8. vs_decompile
-*"Decompile System.Linq.Enumerable.Where."* **Đạt:** ra body C# của member (không phải cả file khổng lồ); type BCL stub (String…) → tự retry SourceLink ra source THẬT, field `source: decompiled|source`, `bodyAvailable` đúng.
+*"Decompile System.Linq.Enumerable.Where."* **Pass:** returns just that member's C# body (not a giant whole file); a forwarded BCL type (String…) auto-retries via SourceLink to REAL source, with `source: decompiled|source` and `bodyAvailable` set correctly.
 
 ### E9. 🆕 vs_rename (1.17)
-*"Preview rename IHandler.Process → Handle."* **Đạt (preview):** `applied:false`, danh sách files gồm CẢ interface + 3 impl, mỗi file có `edits`+`sample`. *"Apply đi"* → `applied:true`, tên đổi mọi nơi. **Ctrl+Z MỘT lần → hoàn tác toàn bộ** (điểm phải test kỹ). `newName` bậy (`123abc`) → từ chối.
+*"Preview renaming IHandler.Process → Handle."* **Pass (preview):** `applied:false`, the files list includes the interface AND all 3 implementations, each with `edits`+`sample`. *"Apply it"* → `applied:true`, the name changes everywhere. **ONE Ctrl+Z undoes the entire rename** (test this carefully). An invalid `newName` (`123abc`) → refused.
 
 ---
 
 ## F. Test integration (vs-debug; fixture `demo/TestLab`)
 
 ### F1. vs_list_tests
-*"Solution có những test nào?"* **Đạt:** danh sách FQN thật (Roslyn scan attribute), không cần build trước.
+*"What tests does the solution have?"* **Pass:** real FQNs (Roslyn attribute scan), no build needed first.
 
 ### F2. vs_run_test
-*"Chạy test X."* **Đạt:** tự build; per-test `{outcome, errorMessage, errorStackTrace, durationMs}` — pass/fail phân biệt THẬT (không phải Success=run-completed). `collectCoverage:true` → có file .coverage trong attachments.
+*"Run test X."* **Pass:** builds automatically; per-test `{outcome, errorMessage, errorStackTrace, durationMs}` — pass/fail distinguished for REAL (not Success=run-completed). `collectCoverage:true` → a .coverage file under attachments.
 
 ### F3. 🆕 vs_run_test profile:true (1.18, EXPERIMENTAL)
-**Đạt:** không còn `Status=Cancelled` + note cũ; có kết quả per-test (có thể kèm .diagsession). **Nếu vẫn Cancelled** → GUID/property không khớp bản VS này; báo lại để dò tiếp (thử `profilerToolId` khác). Fail mục này không chặn các mục khác.
+**Pass:** no more `Status=Cancelled` + the old note; per-test results come back (possibly with a .diagsession). **If still Cancelled** → the GUID/property doesn't match this VS build; report it so we can iterate (try another `profilerToolId`). Failing this item blocks nothing else.
 
 ### F4. 🆕 vs_run_affected (1.16)
-*"Tôi vừa sửa Score.cs, chạy các test bị ảnh hưởng."* **Đạt:** `affected.tests` = FQN kèm `callDistance`; `run.tests` = outcome; `listOnly:true` chỉ liệt kê; file không test nào gọi tới → `count:0` + note.
+*"I just edited Score.cs — run the affected tests."* **Pass:** `affected.tests` = FQNs with `callDistance`; `run.tests` = outcomes; `listOnly:true` only lists; a file no test reaches → `count:0` + note.
 
 ### F5. vs_rerun_failed
-Chạy cả bộ có fail → *"Chạy lại chỉ những test fail."* **Đạt:** chỉ các test fail lượt trước chạy lại.
+Run the suite with failures → *"Re-run only the failed tests."* **Pass:** only the previously failing tests run again.
 
 ### F6. vs_debug_test
-*"Debug test X, dừng ở chỗ fail."* **Đạt:** test chạy dưới debugger, dừng tại điểm ném/assert (phối hợp break-on-thrown).
+*"Debug test X and stop where it fails."* **Pass:** the test runs under the debugger and halts at the throw/assert (pairs with break-on-thrown).
 
 ### F7. vs_hunt_flaky — 🆕 idle-wait (1.18)
-Test intermittent ~1-in-3: *"Hunt test X 12 lượt, đo tỉ lệ — measureRate:true."* **Đạt:** trả `huntId` trong ≤40s; `vs_hunt_result` poll tới đủ **12/12 executed** (trước 1.18 hay hụt), tỉ lệ ~1/3; `vs_hunt_cancel` dừng được.
+On a ~1-in-3 intermittent test: *"Hunt test X for 12 runs and measure the rate — measureRate:true."* **Pass:** returns a `huntId` within ≤40s; `vs_hunt_result` polling reaches a full **12/12 executed** (pre-1.18 often fell short), rate ≈1/3; `vs_hunt_cancel` stops it.
 
 ### F8. vs_catch_flaky
-*"Bắt tận tay test flaky X."* (cần toggle drive). **Đạt:** loop dưới debugger tới lượt fail thì DỪNG NGAY TẠI THROW, exception sống trong frame để mổ xẻ.
+*"Catch flaky test X red-handed."* (needs the drive toggle). **Pass:** loops under the debugger until the failing iteration HALTS AT THE THROW, the exception live in the frame for inspection.
 
 ---
 
-## G. Screen capture (bật toggle "Allow screen capture")
+## G. Screen capture (enable "Allow screen capture")
 
 ### G1. Gate
-Toggle OFF → gọi capture. **Đạt:** từ chối kèm hint.
+Toggle OFF → call a capture tool. **Pass:** refusal with a hint.
 
 ### G2. vs_capture_window
-`target:debuggee` (app có UI đang debug), `target:ide`, `target:window title:"Edge"`. **Đạt:** PNG staged thành chip trên tray + trả `path` (Claude Read path đó thấy ảnh THẬT); window minimized → lỗi bảo restore; title không khớp → lỗi kèm `visibleWindows`.
+`target:debuggee` (a UI app under debug), `target:ide`, `target:window title:"Edge"`. **Pass:** the PNG is staged as a tray chip + a `path` is returned (Claude Reads that path and truly sees the image); a minimized window → an error asking to restore; an unmatched title → an error with `visibleWindows`.
 
 ### G3. vs_capture_screen
-`monitor:0` / `all:true`. **Đạt:** đúng màn hình yêu cầu.
+`monitor:0` / `all:true`. **Pass:** exactly the requested monitor(s).
 
 ### G4. 🆕 Region crop (1.17)
-`region {x:0,y:0,width:800,height:600}` trên cả hai tool. **Đạt:** kết quả `width:800,height:600`, PNG đúng vùng; crop vượt biên tự clamp không lỗi.
+`region {x:0,y:0,width:800,height:600}` on both tools. **Pass:** the result reports `width:800,height:600` and the PNG shows exactly that region; an out-of-bounds crop clamps without erroring.
 
 ---
 
-## H. Profiling (🆕 1.17; cần 3 CLI ở mục Chuẩn bị; fixture `demo/SignalScan` chạy F5)
+## H. Profiling (🆕 1.17; needs the 3 CLIs from Setup; fixture `demo/SignalScan` under F5)
 
 ### H1. vs_perf_counters
-*"Đo counters app đang debug 10 giây."* **Đạt:** object `counters` có `cpu-usage`, `working-set`, `alloc-rate`, `gc-heap-size`…
+*"Sample counters of the debugged app for 10 seconds."* **Pass:** a `counters` object with `cpu-usage`, `working-set`, `alloc-rate`, `gc-heap-size`…
 
 ### H2. vs_trace_cpu
-*"CPU tốn ở đâu? Sample 10 giây."* **Đạt:** `topMethods` = bảng top-N hàm nóng + `traceFile` (mở được PerfView/VS).
+*"Where is the CPU going? Sample 10 seconds."* **Pass:** `topMethods` = a top-N hot-method table + a `traceFile` (opens in PerfView/VS).
 
 ### H3. vs_gc_dump
-*"Cái gì chiếm memory?"* **Đạt:** `topTypes` theo size + `dumpFile`.
+*"What's filling memory?"* **Pass:** `topTypes` by size + a `dumpFile`.
 
-### H4. Thiếu CLI
-Máy chưa cài (hoặc gỡ tạm) → **Đạt:** lỗi kèm hint `dotnet tool install -g …`, không crash.
+### H4. Missing CLI
+On a machine without the tools (or temporarily uninstall one) → **Pass:** an error with the `dotnet tool install -g …` hint, no crash.
 
 ---
 
-## I. Hạ tầng (không có UI riêng)
+## I. Infrastructure (no UI of its own)
 
 ### I1. Multi-agent AgentProfile (1.15)
-Không có gì mới để bấm — **Đạt** = toàn bộ A→H chạy như cũ (hành vi Claude Code giữ nguyên sau khi tham số hoá). Chi tiết: `docs/MULTI-AGENT.md`.
+Nothing new to click — **Pass** = everything in A→H behaves exactly as before (Claude Code behavior unchanged after the parameterization). Details: `docs/MULTI-AGENT.md`.
 
 ### I2. CI/CD (1.15)
-**Đạt:** tab Actions — mỗi push/PR có workflow **Build** xanh kèm artifact `ClaudeCodeVS-vsix`; mỗi tag `v*` có Release kèm `ClaudeCodeVS.vsix` (v1.15.0→v1.18.0 đều đã có).
+**Pass:** the Actions tab — every push/PR has a green **Build** run with a `ClaudeCodeVS-vsix` artifact; every `v*` tag has a Release with `ClaudeCodeVS.vsix` attached (v1.15.0→v1.18.0 all do).
 
 ---
 
-## Ghi chú đã biết (không phải bug)
+## Known notes (not bugs)
 
-- Prompt terminal của CLI vẫn hỏi song song với diff (redundant second gate) — giới hạn kiến trúc đã ghi trong ROADMAP Phase 4.
-- `vs_rename` chỉ C#/VB, symbol phải có source trong solution.
-- Tracepoint hit trong lúc đang `vs_continue` chờ break có thể resolve lượt chờ đó — giới hạn của mô phỏng log-and-continue.
-- `vs_trace_cpu`/`vs_gc_dump` giữ file trace/dump trong `%TEMP%` — xoá tay nếu cần.
-- Reference `at_mentioned` gửi giữa lượt hoặc khi agents view đang focus có thể bị CLI drop — click lại chip để re-mention.
-- F3 (profile:true) là experimental — fail thì báo, không chặn merge/test khác.
-- Các mục 1.16→1.18 mới build-verified; checklist này chính là bước live-verify.
+- The CLI's terminal prompt still asks alongside the diff (a redundant second gate) — an architectural limitation recorded in ROADMAP Phase 4.
+- `vs_rename` is C#/VB only and the symbol must have source in the solution.
+- A tracepoint hit while a `vs_continue` is awaiting the next break may resolve that wait — a known limit of the simulated log-and-continue.
+- `vs_trace_cpu`/`vs_gc_dump` keep their trace/dump files in `%TEMP%` — delete manually if needed.
+- An `at_mentioned` reference sent mid-turn or with the agents view focused may be silently dropped by the CLI — click the chip to re-mention.
+- F3 (profile:true) is experimental — report a failure, it blocks nothing else.
+- Everything 1.16→1.18 is build-verified only; this checklist IS the live-verification pass.
