@@ -20,7 +20,10 @@ jobs:
 
       - name: Build Release VSIX
         shell: pwsh
-        run: msbuild src/ClaudeCodeVS/ClaudeCodeVS.csproj /t:Restore,Build /p:Configuration=Release /p:DeployExtension=false /v:minimal /nologo
+        # /restore (not /t:Restore,Build): restore must finish BEFORE project evaluation, or the
+        # VSSDK.BuildTools nuget targets (obj/*.nuget.g.targets) aren't imported and the build
+        # compiles the DLL but silently skips creating the .vsix container.
+        run: msbuild src/ClaudeCodeVS/ClaudeCodeVS.csproj /restore /t:Build /p:Configuration=Release /p:DeployExtension=false /v:minimal /nologo
 
       - name: Upload VSIX artifact
         uses: actions/upload-artifact@v4
