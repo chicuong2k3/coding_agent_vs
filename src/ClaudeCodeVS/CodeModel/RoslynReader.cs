@@ -81,6 +81,63 @@ internal static class RoslynReader
 
     private static JObject Err(string message) => new JObject { ["available"] = true, ["error"] = message };
 
+    // ---- Precise diagnostics (ROADMAP Phase 2: Roslyn span ranges for getDiagnostics) ------------------
+
+    /// <summary>
+    /// LSP diagnostics with REAL spans (start+end line/character) for the given files, from each
+    /// document's semantic model — the precision the Error List can't give (it exposes one point per
+    /// entry). Returns path -> diagnostics ONLY for files that resolve to a Roslyn document AND have
+    /// ≥1 diagnostic; the caller keeps its Error List entries for everything else (C++, loose files,
+    /// build-only errors). Null when no C#/VB solution is loaded. Per-document semantic models only —
+    /// never a whole-solution compile.
+    /// </summary>
+    public static async Task<Dictionary<string, JArray>?> GetPreciseDiagnosticsAsync(
+        IReadOnlyCollection<string> files, CancellationToken ct)
+    {
+        var solution = await GetSolutionOffThreadAsync(ct);
+        if (solution == null || !solution.Projects.Any()) return null;
+
+        var result = new Dictionary<string, JArray>(StringComparer.OrdinalIgnoreCase);
+        foreach (var file in files)
+        {
+            ct.ThrowIfCancellationRequested();
+            var doc = FindDocument(solution, file);
+            if (doc == null) continue;
+
+            SemanticModel? model;
+            try { model = await doc.GetSemanticModelAsync(ct).ConfigureAwait(false); }
+            catch { continue; } // a broken document must not sink the whole envelope
+            if (model == null) continue;
+
+            var arr = new JArray();
+            foreach (var d in model.GetDiagnostics(cancellationToken: ct))
+            {
+                if (d.Severity == DiagnosticSeverity.Hidden) continue;
+                var span = d.Location.GetLineSpan();
+                arr.Add(new JObject
+                {
+                    ["message"] = d.GetMessage(),
+                    ["severity"] = d.Severity switch
+                    {
+                        DiagnosticSeverity.Error => 1,
+                        DiagnosticSeverity.Warning => 2,
+                        _ => 3,
+                    },
+                    ["code"] = d.Id,
+                    ["source"] = "roslyn",
+                    ["range"] = new JObject
+                    {
+                        ["start"] = new JObject { ["line"] = span.StartLinePosition.Line, ["character"] = span.StartLinePosition.Character },
+                        ["end"] = new JObject { ["line"] = span.EndLinePosition.Line, ["character"] = span.EndLinePosition.Character },
+                    },
+                });
+            }
+            if (arr.Count > 0)
+                result[doc.FilePath ?? file] = arr;
+        }
+        return result;
+    }
+
     // ---- Test discovery (for the vs-test tools) --------------------------------------------------------
 
     private static readonly HashSet<string> TestAttributeNames = new(StringComparer.Ordinal)
@@ -129,6 +186,103 @@ internal static class RoslynReader
             }
         }
         return new JObject { ["available"] = true, ["count"] = tests.Count, ["tests"] = tests };
+    }
+
+    /// <summary>
+    /// vs_run_affected support (ROADMAP "run tests affected by a change"): the tests that
+    /// (transitively) call into anything declared in the given files. Seeds = every method/property
+    /// declared in each file; BFS UP the caller graph via SymbolFinder (depth-capped, cycle-guarded,
+    /// node-budgeted); any caller — or seed — carrying a known test attribute is an affected test.
+    /// </summary>
+    public static async Task<JObject> FindAffectedTestsAsync(IReadOnlyCollection<string> files, CancellationToken ct)
+    {
+        const int MaxDepth = 6;      // test → helper → helper → … → changed code; deeper is noise
+        const int NodeBudget = 800;  // caller-graph nodes explored before signaling truncation
+
+        var solution = await GetSolutionOffThreadAsync(ct);
+        if (solution == null || !solution.Projects.Any()) return Unavailable();
+
+        bool IsTest(ISymbol s) =>
+            s is IMethodSymbol m
+            && m.GetAttributes().Any(a => a.AttributeClass != null && TestAttributeNames.Contains(a.AttributeClass.Name));
+
+        // 1) Seeds: every method/property declared in the changed files.
+        var seeds = new List<ISymbol>();
+        var unresolved = new JArray();
+        foreach (var file in files)
+        {
+            ct.ThrowIfCancellationRequested();
+            var doc = FindDocument(solution, file);
+            if (doc == null) { unresolved.Add(file); continue; }
+            var model = await doc.GetSemanticModelAsync(ct).ConfigureAwait(false);
+            if (model == null) continue;
+            var root = await model.SyntaxTree.GetRootAsync(ct).ConfigureAwait(false);
+            foreach (var node in root.DescendantNodes())
+            {
+                var s = ModelExtensions.GetDeclaredSymbol(model, node, ct);
+                if (s is IMethodSymbol or IPropertySymbol) seeds.Add(s);
+            }
+        }
+        if (seeds.Count == 0)
+            return new JObject
+            {
+                ["available"] = true, ["count"] = 0, ["tests"] = new JArray(),
+                ["note"] = "No method/property declarations found in the given files (are they part of the loaded solution?).",
+                ["unresolvedFiles"] = unresolved,
+            };
+
+        // 2) BFS up the caller graph, collecting test methods.
+        var visited = new HashSet<string>(StringComparer.Ordinal);
+        var affected = new Dictionary<string, int>(StringComparer.Ordinal); // fqn -> shallowest depth
+        bool truncated = false;
+        var queue = new Queue<(ISymbol sym, int depth)>();
+
+        foreach (var s in seeds)
+        {
+            var id = s.GetDocumentationCommentId();
+            if (id == null || !visited.Add(id)) continue;
+            if (IsTest(s)) // a test living in the edited file is affected by definition
+                affected[s.ContainingType.ToDisplayString() + "." + s.Name] = 0;
+            queue.Enqueue((s, 0));
+        }
+
+        while (queue.Count > 0)
+        {
+            ct.ThrowIfCancellationRequested();
+            var (sym, depth) = queue.Dequeue();
+            if (depth >= MaxDepth) continue;
+            if (visited.Count >= NodeBudget) { truncated = true; break; }
+
+            IEnumerable<SymbolCallerInfo> callers;
+            try { callers = await SymbolFinder.FindCallersAsync(sym, solution, ct).ConfigureAwait(false); }
+            catch { continue; }
+
+            foreach (var c in callers)
+            {
+                var caller = c.CallingSymbol;
+                var id = caller.GetDocumentationCommentId();
+                if (id == null || !visited.Add(id)) continue;
+                if (IsTest(caller))
+                {
+                    string fqn = caller.ContainingType.ToDisplayString() + "." + caller.Name;
+                    if (!affected.TryGetValue(fqn, out int d) || depth + 1 < d) affected[fqn] = depth + 1;
+                    // don't recurse above a test — nothing calls tests
+                }
+                else
+                {
+                    queue.Enqueue((caller, depth + 1));
+                }
+            }
+        }
+
+        var tests = new JArray();
+        foreach (var kv in affected.OrderBy(k => k.Value).ThenBy(k => k.Key, StringComparer.Ordinal))
+            tests.Add(new JObject { ["fullyQualifiedName"] = kv.Key, ["callDistance"] = kv.Value });
+
+        var payload = new JObject { ["available"] = true, ["count"] = tests.Count, ["tests"] = tests };
+        if (unresolved.Count > 0) payload["unresolvedFiles"] = unresolved;
+        Mark(payload, truncated, NodeBudget, "caller-graph nodes");
+        return payload;
     }
 
     /// <summary>All named types in a namespace, including nested, recursively.</summary>

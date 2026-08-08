@@ -432,6 +432,7 @@ internal sealed class BridgeHost : IDisposable
         var testRunner = new Testing.TestRunner();
         yield return new VsListTestsTool(testRunner);   // discover (Roslyn)
         yield return new VsRunTestTool(testRunner);     // run one/all + coverage
+        yield return new VsRunAffectedTool(testRunner); // run the tests reached by a change (Roslyn caller graph)
         yield return new VsRerunFailedTool(testRunner); // re-run only the last run's failures
         yield return new VsDebugTestTool(testRunner);   // launch one under the debugger
         yield return new VsHuntFlakyTool(testRunner);   // force-reproduce a flaky failure (async start+poll)

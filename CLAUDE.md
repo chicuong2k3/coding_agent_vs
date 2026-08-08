@@ -104,9 +104,7 @@ Live debugger exposed to the model over the SAME bridge (full reference: `docs/D
 
 ## Diagnostics
 
-Currently both C# and C++ diagnostics come from the **Error List** (`SVsErrorList -> IVsTaskList`) via `ErrorListReader.cs`. This is a single unified path that serves both languages - Roslyn pushes C# diagnostics into the Error List and the MSVC toolchain pushes C++ ones. Ranges are point ranges only (the Error List exposes one line/column per entry).
-
-Roslyn-precise C# span ranges (`VisualStudioWorkspace -> Compilation.GetDiagnostics()`) are a Phase 3 enhancement - see `ROADMAP.md`. Always return `[{uri, diagnostics: []}]` - the envelope, even when empty. Requires a loaded project (the Error List is empty for loose files).
+Both C# and C++ diagnostics come from the **Error List** (`SVsErrorList -> IVsTaskList`) via `ErrorListReader.cs` - a single unified path (Roslyn pushes C# diagnostics into it, MSVC pushes C++ ones), which exposes only point ranges. **Since 1.16.0**, `GetDiagnosticsTool` then upgrades C#/VB entries to **Roslyn-precise start/end spans** via `RoslynReader.GetPreciseDiagnosticsAsync` (per-document semantic models for the files the Error List flagged + the requested file - never a whole-solution compile). C++/loose files keep point ranges; a Roslyn-clean file keeps its Error List entries (build-only errors). Always return `[{uri, diagnostics: []}]` - the envelope, even when empty. Requires a loaded project (the Error List is empty for loose files).
 
 ## Semantic navigation (1.9.0; `vs-semantic` MCP server)
 
@@ -132,7 +130,7 @@ VS's Test Explorer engine exposed to the model as a closed **discover → run �
 - **`vs_catch_flaky`** (catch red-handed; gated behind `AllowDebuggerDrive`): loop a test under the debugger with break-on-thrown armed until the failing iteration halts at the throw. Reuses the debugger's OnModeChange await via `DebuggerDriver.LaunchAndAwaitBreakAsync(launch, timeout)` — fire a debug run, await Break (caught) vs Design (passed). Auto-learns the exception type from a pre-hunt; for a bare assertion (no type in the message) it arms the framework assertion base types (`Xunit.Sdk.XunitException` / NUnit / MSTest — break-on-thrown matches subclasses).
 - **Self-builds** via `DTE.Solution.SolutionBuild.Build(true)` so tools never need a manual Ctrl+Shift+B. Engine + EnvDTE are UI-thread-bound (convention #1); Roslyn discovery hops off.
 
-**Tools** (on `vs-debug`): `vs_list_tests` / `vs_run_test` (coverage ✅; profile deferred — needs a `ProfilerToolId`) / `vs_rerun_failed` / `vs_debug_test` / `vs_hunt_flaky` + `vs_hunt_result` + `vs_hunt_cancel` / `vs_catch_flaky`. Fixture: `demo/TestLab` (net10 xUnit: pass, assert-fail, throw, + two ~1-in-3 intermittent for the hunter/catcher). Follow-ups: run-affected (`Scope.ForFile/ForSymbol` + vs-semantic call-graph), profiling GUID, hunt idle-wait (`IOperationState`).
+**Tools** (on `vs-debug`): `vs_list_tests` / `vs_run_test` (coverage ✅; profile deferred — needs a `ProfilerToolId`) / `vs_run_affected` (1.16.0: changed files → Roslyn caller-graph BFS up to test methods → ONE multi-`Scope.ForSymbol` engine pass via `TestRunner.RunManyAsync`; `callDistance` per test, `listOnly` supported) / `vs_rerun_failed` / `vs_debug_test` / `vs_hunt_flaky` + `vs_hunt_result` + `vs_hunt_cancel` / `vs_catch_flaky`. Fixture: `demo/TestLab` (net10 xUnit: pass, assert-fail, throw, + two ~1-in-3 intermittent for the hunter/catcher). Follow-ups: profiling GUID, hunt idle-wait (`IOperationState`).
 
 ## Build / run / test
 

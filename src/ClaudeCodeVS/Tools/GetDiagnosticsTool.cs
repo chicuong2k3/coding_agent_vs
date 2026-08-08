@@ -1,4 +1,6 @@
 using System;
+using System.Collections.Generic;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using ClaudeCodeVs.Editor;
@@ -31,6 +33,25 @@ internal sealed class GetDiagnosticsTool : IIdeTool
 
         await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync(ct);
         var byFile = ErrorListReader.Read();
+
+        // Upgrade C#/VB entries to Roslyn-precise spans (ROADMAP Phase 2): for every file the Error
+        // List flagged - plus the explicitly requested file - ask the semantic model for real
+        // start/end ranges. Files Roslyn doesn't know (C++, loose files) keep their point ranges,
+        // and a file whose Roslyn model is clean keeps its Error List entries (build-only errors).
+        try
+        {
+            var wanted = new List<string>(byFile.Keys);
+            if (pathFilter is not null && !wanted.Any(f => PathEquals(f, pathFilter)))
+                wanted.Add(pathFilter);
+            var precise = await CodeModel.RoslynReader.GetPreciseDiagnosticsAsync(wanted, ct);
+            if (precise is not null)
+                foreach (var kv in precise)
+                    byFile[kv.Key] = kv.Value;
+        }
+        catch (Exception e)
+        {
+            Log.Warn($"getDiagnostics: precise-span upgrade failed, using Error List ranges ({e.Message})");
+        }
 
         var result = new JArray();
         bool matchedFilter = false;

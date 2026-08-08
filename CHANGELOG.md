@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.16.0 - 2026-08-08
+
+Two ROADMAP items land: precise diagnostics and the fix-verify shortcut.
+
+### Features
+
+- **Roslyn-precise diagnostic ranges.** `getDiagnostics` now returns real start/end spans for C#/VB from each document's semantic model (`RoslynReader.GetPreciseDiagnosticsAsync`), so the model can anchor a fix to the exact bad expression instead of a whole line. Files Roslyn doesn't know (C++, loose files) keep the Error List point ranges; a Roslyn-clean file keeps its Error List entries (build-only errors). Per-document semantic models only — never a whole-solution compile.
+- **`vs_run_affected` (vs-debug MCP)** — "run the tests that touch the code I edited": pass the changed file(s); a Roslyn caller-graph BFS (depth 6, cycle-guarded, 800-node budget with `{truncated}` signaling) walks from every method/property declared there UP to test methods (`[Fact]/[Theory]/[Test]/[TestMethod]/[TestCase]`), then runs exactly those in ONE Test Explorer pass (one `Scope.ForSymbol` per FQN — `TestRunner.RunManyAsync`). Returns the affected list with `callDistance` (hops from the change) + per-test outcomes; `listOnly=true` for just the list.
+
 ## 1.15.0 - 2026-08-08
 
 **Multi-agent groundwork** — the agent-specific surface is now one class, `AgentProfile` (`src/ClaudeCodeVS.Protocol/AgentProfile.cs`), with Claude Code as the default instance. Full analysis + coupling matrix: [`docs/MULTI-AGENT.md`](docs/MULTI-AGENT.md) (new).
