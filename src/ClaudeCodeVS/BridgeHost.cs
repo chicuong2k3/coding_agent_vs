@@ -47,6 +47,15 @@ internal sealed class BridgeHost : IDisposable
     private CancellationTokenSource? _mcpGraceCts;
     private volatile bool _mcpEverSeen;
 
+    // Connected-pill state for agents WITHOUT a live IDE WebSocket (omp always, opencode until/unless
+    // it attaches). Their stubs POST /agent-heartbeat every ~30s; the pill is green while EITHER a WS
+    // client is attached OR a heartbeat is fresh. HTTP has no disconnect, so a sweep timer greys the
+    // pill once beats stop. ponytail: one sliding window, no per-agent registry - the pill is a bool.
+    private static readonly TimeSpan HeartbeatTtl = TimeSpan.FromSeconds(90);
+    private bool _wsConnected;
+    private DateTime _lastBeatUtc = DateTime.MinValue;
+    private Timer? _presenceSweep;
+
     public BridgeHost(AsyncPackage package) => _package = package;
 
     /// <summary>The port the bridge is listening on, or null if not started yet.</summary>
@@ -98,32 +107,12 @@ internal sealed class BridgeHost : IDisposable
         // (port + auth token) to reconnect.
         _server.ConnectionChanged += connected =>
         {
-            Ui.BridgeStatus.SetConnected(connected);
+            _wsConnected = connected;
+            Ui.BridgeStatus.SetConnected(connected || HeartbeatFresh);
             WatchMcpLoad(connected); // arm/stand-down the "PULL tools didn't load" detector
             if (connected)
             {
-                // Install-on-connect (marketplace feedback): a session that reaches the bridge without
-                // going through our Launch button (manual `claude` + /ide, a fresh clone whose committed
-                // settings.json references our hooks) used to hit "-File does not exist" on every prompt
-                // because the scripts were never materialized. Idempotent; runs off-thread. Installs for
-                // EVERY agent: each installer is self-gated by the agent's Supports* flags, so a connect
-                // from a manually-launched agent still finds its scripts.
-                _ = Task.Run(async () =>
-                {
-                    try
-                    {
-                        var ws = await GetWorkspaceRootAsync();
-                        if (!string.IsNullOrEmpty(ws))
-                        {
-                            foreach (var agent in AgentProfile.All)
-                            {
-                                Hooks.PermissionHookInstaller.EnsureInstalled(ws!, agent);
-                                Hooks.McpInstaller.EnsureInstalled(ws!, agent);
-                            }
-                        }
-                    }
-                    catch (Exception e) { Log.Warn($"install-on-connect failed: {e.Message}"); }
-                });
+                InstallScriptsOffThread();
                 return;
             }
 #pragma warning disable VSSDK007
@@ -137,6 +126,37 @@ internal sealed class BridgeHost : IDisposable
 
         // The other half of the detector: any /mcp or /mcp-semantic hit proves the MCP servers loaded.
         _server.McpActivity += OnMcpActivity;
+
+        // Heartbeats from the per-agent stubs (POST /agent-heartbeat): green the pill for agents that
+        // don't (or don't yet) hold the IDE WebSocket. The sweep timer greys it once beats stop for
+        // HeartbeatTtl and no WS client is attached.
+        _server.AgentHeartbeat += agent =>
+        {
+            var wasFresh = HeartbeatFresh;
+            _lastBeatUtc = DateTime.UtcNow;
+            if (!Ui.BridgeStatus.Connected)
+            {
+                Log.Info($"agent heartbeat: {agent} is alive -> connected");
+                Ui.BridgeStatus.SetConnected(true);
+                InstallScriptsOffThread(); // manual launches (no Launch button) still get their scripts
+            }
+            else if (!wasFresh && !_wsConnected)
+            {
+                Log.Info($"agent heartbeat: {agent}");
+            }
+        };
+        _presenceSweep = new Timer(_ =>
+        {
+            try
+            {
+                if (!_wsConnected && Ui.BridgeStatus.Connected && !HeartbeatFresh && _lastBeatUtc != DateTime.MinValue)
+                {
+                    Log.Info("agent heartbeats stopped -> disconnected");
+                    Ui.BridgeStatus.SetConnected(false);
+                }
+            }
+            catch { /* sweep must never throw */ }
+        }, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
 
         // Single-gate: the PreToolUse hook POSTs to /permission, which routes here to show the diff.
         _server.PermissionHandler = ShowPermissionDiffAsync;
@@ -352,6 +372,36 @@ internal sealed class BridgeHost : IDisposable
             Log.Warn($"debug-context read failed: {e.Message}");
             return "{\"mode\":\"unknown\"}";
         }
+    }
+
+    private bool HeartbeatFresh => DateTime.UtcNow - _lastBeatUtc < HeartbeatTtl;
+
+    /// <summary>
+    /// Install-on-connect (marketplace feedback): a session that reaches the bridge without going
+    /// through our Launch button (manual `claude` + /ide, a fresh clone whose committed settings.json
+    /// references our hooks) used to hit "-File does not exist" on every prompt because the scripts
+    /// were never materialized. Idempotent; runs off-thread. Installs for EVERY agent: each installer
+    /// is self-gated by the agent's Supports* flags, so a connect from a manually-launched agent
+    /// still finds its scripts. Called from both the WS connect and the first stub heartbeat.
+    /// </summary>
+    private void InstallScriptsOffThread()
+    {
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var ws = await GetWorkspaceRootAsync();
+                if (!string.IsNullOrEmpty(ws))
+                {
+                    foreach (var agent in AgentProfile.All)
+                    {
+                        Hooks.PermissionHookInstaller.EnsureInstalled(ws!, agent);
+                        Hooks.McpInstaller.EnsureInstalled(ws!, agent);
+                    }
+                }
+            }
+            catch (Exception e) { Log.Warn($"install-on-connect failed: {e.Message}"); }
+        });
     }
 
     /// <summary>
@@ -652,6 +702,7 @@ internal sealed class BridgeHost : IDisposable
     {
         try { _cts.Cancel(); } catch { /* shutting down */ }
         try { lock (_mcpGate) { _mcpGraceCts?.Cancel(); _mcpGraceCts?.Dispose(); _mcpGraceCts = null; } } catch { /* shutting down */ }
+        _presenceSweep?.Dispose();
         _watcher?.Dispose();
         _driver?.Dispose(); // unadvise the IVsDebugger event sink (best-effort)
         _dataBpBridge?.Dispose(); // stop the data-breakpoint change tailer

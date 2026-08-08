@@ -163,6 +163,23 @@ export const VsDiffGate = async () => {
   // Resolve once at plugin load; the port/token live for the whole VS process session.
   const bridge = await findBridge();
 
+  // Presence heartbeat: opencode may attach to the IDE WebSocket late (or not at all), which left
+  // the panel pill grey even though the session was live. Beat /agent-heartbeat every 30s so the
+  // extension greens "Connected" from plugin load; beats stopping (process exit) grey it again.
+  if (bridge) {
+    const beat = () =>
+      fetch(`http://127.0.0.1:${bridge.port}/agent-heartbeat`, {
+        method: "POST",
+        headers: {
+          "x-claude-code-ide-authorization": bridge.token,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ agent: "OpenCode" }),
+      }).catch(() => {});
+    beat();
+    setInterval(beat, 30_000).unref?.(); // unref: never keep the CLI process alive just to beat
+  }
+
   return {
     "tool.execute.before": async (input, output) => {
       // Only file-modifying tools can enter the diff; read-only tools pass straight through.

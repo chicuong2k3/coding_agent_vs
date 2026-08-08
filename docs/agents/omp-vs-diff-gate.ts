@@ -187,6 +187,24 @@ export default async function vsDiffGate(pi: ExtensionAPI) {
   // async is fine - omp/pi awaits it before startup completes (docs: async factory functions).
   const bridge = await findBridge();
 
+  // Presence heartbeat: omp never opens the IDE WebSocket, so the panel pill had no signal to turn
+  // green. Beat /agent-heartbeat every 30s from extension load; the extension greens "Connected" on
+  // the first beat and greys it once beats stop (process exit).
+  if (bridge) {
+    const beat = () =>
+      fetch(`http://127.0.0.1:${bridge.port}/agent-heartbeat`, {
+        method: "POST",
+        headers: {
+          "x-claude-code-ide-authorization": bridge.token,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ agent: "Oh My Pi" }),
+      }).catch(() => {});
+    beat();
+    // unref: never keep omp alive just to beat (Node timers only; typed loosely for dom lib)
+    (setInterval(beat, 30_000) as unknown as { unref?: () => void }).unref?.();
+  }
+
   // Throttle turn-end toasts: a "turn" ends on every model reply, but we only want the toast
   // when omp actually hands control back to the user (which may be several turns later).
   let lastToast = 0;

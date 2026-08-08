@@ -85,6 +85,15 @@ public sealed class IdeWebSocketServer
     public Func<CancellationToken, Task<string>>? AgentContextHandler { get; set; }
 
     /// <summary>
+    /// Raised on each POST /agent-heartbeat (body {agent}) from a per-agent stub. Agents that never
+    /// open the IDE WebSocket (omp) - or connect late (opencode) - have no ConnectionChanged signal,
+    /// so their stubs beat every ~30s while the CLI is alive; the VSIX greens the panel pill on the
+    /// first beat and greys it when beats stop (and no WS client is attached). The string is the
+    /// agent's display name.
+    /// </summary>
+    public event Action<string>? AgentHeartbeat;
+
+    /// <summary>
     /// Secondary MCP surface for the Phase 2 debug PULL channel (POST /mcp). The CLI launches a tiny
     /// stdio shim as a normal MCP server; the shim forwards each JSON-RPC message here over HTTP, so the
     /// model can call vs_debug_state / vs_list_breakpoints / vs_get_frame_locals / vs_evaluate on demand.
@@ -196,6 +205,12 @@ public sealed class IdeWebSocketServer
                 && ctx.Request.Url?.AbsolutePath == "/agent-context")
             {
                 await HandleAgentContextRequestAsync(ctx, ct);
+                return;
+            }
+            if (string.Equals(ctx.Request.HttpMethod, "POST", StringComparison.OrdinalIgnoreCase)
+                && ctx.Request.Url?.AbsolutePath == "/agent-heartbeat")
+            {
+                await HandleAgentHeartbeatRequestAsync(ctx, ct);
                 return;
             }
             if (string.Equals(ctx.Request.HttpMethod, "POST", StringComparison.OrdinalIgnoreCase)
@@ -381,6 +396,23 @@ public sealed class IdeWebSocketServer
             ctx.Response.Close();
         }
         catch { /* client gave up */ }
+    }
+
+    private async Task HandleAgentHeartbeatRequestAsync(HttpListenerContext ctx, CancellationToken ct)
+    {
+        try
+        {
+            string body;
+            using (var reader = new StreamReader(ctx.Request.InputStream, Encoding.UTF8))
+                body = await reader.ReadToEndAsync();
+            var agent = (string?)JObject.Parse(body)["agent"] ?? "agent";
+            AgentHeartbeat?.Invoke(agent);
+        }
+        catch (Exception e)
+        {
+            Log.Warn($"agent-heartbeat request failed: {e.Message}");
+        }
+        try { ctx.Response.StatusCode = 200; ctx.Response.Close(); } catch { /* client gave up */ }
     }
 
     private async Task HandleAgentContextRequestAsync(HttpListenerContext ctx, CancellationToken ct)
