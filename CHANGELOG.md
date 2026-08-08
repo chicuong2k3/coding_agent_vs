@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.21.1 - 2026-08-09
+
+### Fixes
+
+- **The agent stubs never found the bridge — every stub feature was silently inert.** Both stubs read a `port` field from the lockfile JSON, but the lockfile contract carries the port in the FILENAME (`<port>.lock`; the JSON has no port field — same rule the PowerShell hooks follow via `$f.BaseName`). `doc.port` was always `undefined`, the liveness probe always failed, and the stub fell back to "no bridge": no diff gate, no toasts, no heartbeat, no context injection — for both OpenCode and Oh My Pi, since the first stub release. Now parsed from the filename, plus the `ideName` filter the docs promised. Covered by a runnable regression test (fake lockfile + mock bridge, real stub import) that fails on the old code.
+
 ## 1.21.0 - 2026-08-09
 
 **Multi-agent parity** — the last two per-agent gaps close; OpenCode and Oh My Pi now match Claude Code's context channels.

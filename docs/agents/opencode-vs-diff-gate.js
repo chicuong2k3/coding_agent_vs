@@ -49,12 +49,14 @@ async function findBridge() {
     .map((f) => {
       try {
         const doc = JSON.parse(readFileSync(join(ideDir, f), "utf8"));
-        return { port: doc.port, token: doc.authToken, workspace: doc.workspaceFolders?.[0] };
+        if (doc.ideName !== "Visual Studio") return null; // another IDE's lockfile
+        // The port is the FILENAME (<port>.lock) - the lockfile JSON has no port field.
+        return { port: Number.parseInt(f, 10), token: doc.authToken, workspace: doc.workspaceFolders?.[0] };
       } catch {
         return null;
       }
     })
-    .filter((c) => c && c.token)
+    .filter((c) => c && c.token && Number.isFinite(c.port))
     // Prefer the lockfile whose workspace folder is the longest prefix of our cwd.
     .sort(
       (a, b) =>

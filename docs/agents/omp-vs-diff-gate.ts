@@ -55,16 +55,19 @@ async function findBridge(): Promise<{ port: number; token: string } | null> {
     .map((f): { port: number; token: string; workspace?: string } | null => {
       try {
         const doc = JSON.parse(readFileSync(join(ideDir, f), "utf8")) as {
-          port: number;
+          ideName?: string;
           authToken: string;
           workspaceFolders?: string[];
         };
-        return { port: doc.port, token: doc.authToken, workspace: doc.workspaceFolders?.[0] };
+        if (doc.ideName !== "Visual Studio") return null; // another IDE's lockfile
+        // The port is the FILENAME (<port>.lock) - the lockfile JSON has no port field.
+        return { port: Number.parseInt(f, 10), token: doc.authToken, workspace: doc.workspaceFolders?.[0] };
       } catch {
         return null;
       }
     })
-    .filter((c): c is { port: number; token: string; workspace?: string } => !!c && !!c.token)
+    .filter((c): c is { port: number; token: string; workspace?: string } =>
+      !!c && !!c.token && Number.isFinite(c.port))
     // Prefer the workspace root that is the longest prefix of our cwd.
     .sort(
       (a, b) =>
