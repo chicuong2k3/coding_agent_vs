@@ -139,8 +139,10 @@ internal static class VsTerminalLauncher
 
                 // /K keeps the window open after the CLI exits (parity with today's cmd.exe path); env vars are
                 // baked into an inline `set` chain since TerminalWindowOptions has no EnvironmentVariables property.
+                // An agent with NO env vars (omp) must not produce a leading "&&" - cmd errors with
+                // "&& was unexpected at this time" and the terminal opens dead.
                 string setChain = string.Join("&&", agent.EnvironmentFor(ssePort).Select(kv => $"set {kv.Key}={kv.Value}"));
-                string args = $"/K {setChain}&&{agent.Binary}";
+                string args = setChain.Length > 0 ? $"/K {setChain}&&{agent.Binary}" : $"/K {agent.Binary}";
                 profile = profileCtor.Invoke(new object?[] { agent.DisplayName, "cmd.exe", args, false });
 
                 // TerminalWindowOptions.Profile alone is ignored unless the profile is first registered with the
