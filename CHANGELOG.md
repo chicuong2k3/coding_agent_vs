@@ -1,6 +1,6 @@
 # Changelog
 
-## 1.20.0 - 2026-08-09
+## 1.21.0 - 2026-08-09
 
 **Multi-agent parity** — the last two per-agent gaps close; OpenCode and Oh My Pi now match Claude Code's context channels.
 
@@ -9,6 +9,10 @@
 - **OpenCode: break-state context injection.** The auto-deployed plugin gains a `chat.message` hook: on each user message it POSTs the bridge's existing `/debug-context` endpoint and, when Visual Studio is paused at a breakpoint, appends the live state (stop location, call stack, locals/arguments) as a synthetic text part — the exact equivalent of Claude Code's `UserPromptSubmit` hook. No-op when not in break mode; fail-open on any error.
 - **The panel pill now turns Connected for OpenCode and Oh My Pi.** "Connected" was driven solely by an IDE WebSocket attach, which omp never performs and opencode may perform late or not at all — Launch worked but the pill stayed grey. Both stubs now POST a `/agent-heartbeat` every 30s from load; the first beat greens the pill (and triggers the same install-on-connect as a WS attach), and a sweep greys it ~90s after beats stop (HTTP has no disconnect signal). A live WS connection keeps its exact old behavior.
 - **Oh My Pi: the IDE push channels, restored at prompt time.** A new bridge endpoint `POST /agent-context` returns `{debug, selection, attachments}` in one round trip; the auto-deployed omp stub calls it from `before_agent_start` and injects a hidden context message (`display:false`) carrying whatever is live: the debugger's break state, the user's current editor selection (the `selection_changed` channel), and attachments staged since the last turn (the `at_mentioned` channel — `AttachmentService.TakeUndelivered()` marks them Sent, same semantics as the WS flush). Empty sections inject nothing; each bridge section fails independently and open.
+
+## 1.20.0 - 2026-08-09
+
+**Diff-gate stubs auto-deploy** — Launch now writes each agent's stub into its plugin dir (`.opencode/plugins/vs-diff-gate.js`, `.omp/extensions/vs-diff-gate.ts`), so the Accept/Reject diff gate and turn-end notifications work for OpenCode and Oh My Pi with zero manual copying (`AgentStubInstaller`, content-checked writes).
 
 ## 1.19.0 - 2026-08-09
 
