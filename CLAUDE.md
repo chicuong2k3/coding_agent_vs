@@ -37,7 +37,7 @@ If you ever find yourself adding an LLM API call, an agent loop, or a tool the C
 
 - **In-proc VSIX, `net48`, VSSDK + Community Toolkit.** The differencing service, Roslyn workspace, RDT, and editor adapters are in-proc services; the out-of-process `VisualStudio.Extensibility` model can't host them. Do not propose migrating the diff core to it.
 - **WebSocket = `HttpListener`** bound to `127.0.0.1` only. No third-party WS/agent libraries.
-- **Manifest targets `[17.14, 19.0)`** (VS Marketplace requires a stable API lower bound; 18.0 is experimental). Extension is tested on VS 2026 only; VS 2022 verification is a future item - see `ROADMAP.md`.
+- **Manifest targets `[17.14,)`** — DELIBERATELY unbounded above so future VS majors install without a re-release (user decision, 2026-08-08; do NOT "fix" it back to `[17.14,19.0)` — the Qodo compliance rule 2396913 still says the bounded range and should be updated instead). Extension is tested on VS 2026 only; VS 2022 verification is a future item - see `ROADMAP.md`.
 
 ## Non-negotiable conventions
 

@@ -16,7 +16,7 @@ The ROADMAP sweep — five items land in one release. Per-feature test guide: [`
 
 - Profiling CLI processes are now disposed and killed on cancellation/timeout (no orphaned `dotnet-trace` holding a session).
 - `getDiagnostics` precise-span upgrade now MERGES with Error List entries (dedupe by line+message) instead of replacing — MSBuild/analyzer-only entries for the same file are kept.
-- Manifest installation target reverted to `[17.14,19.0)` (the 1.15.0 widening to `[17.14,)` violated the repo's Marketplace version-range rule).
+- Manifest installation target stays `[17.14,)` — DELIBERATE: the unbounded upper end lets future VS majors install without a re-release. The Qodo compliance rule 2396913 (`[17.14,19.0)`) predates this decision and should be updated to match.
 
 ## 1.16.0 - 2026-08-08
 
