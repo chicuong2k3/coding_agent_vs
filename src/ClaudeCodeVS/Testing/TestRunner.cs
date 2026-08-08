@@ -53,14 +53,14 @@ internal sealed class TestRunner
     });
 
     /// <summary>Run tests by fully-qualified name (or all). Awaits the engine's own completion task.</summary>
-    public Task<JObject> RunAsync(string? fqn, bool collectCoverage, bool profile, CancellationToken ct, bool build = true, bool failedOnly = false)
-        => RunCoreAsync(fqn == null ? null : new[] { fqn }, collectCoverage, profile, ct, build, failedOnly);
+    public Task<JObject> RunAsync(string? fqn, bool collectCoverage, bool profile, CancellationToken ct, bool build = true, bool failedOnly = false, string? profilerToolId = null)
+        => RunCoreAsync(fqn == null ? null : new[] { fqn }, collectCoverage, profile, ct, build, failedOnly, profilerToolId);
 
     /// <summary>Run a SET of tests in one engine pass (vs_run_affected): one Scope.ForSymbol per FQN.</summary>
     public Task<JObject> RunManyAsync(IReadOnlyCollection<string> fqns, CancellationToken ct)
         => RunCoreAsync(fqns, collectCoverage: false, profile: false, ct);
 
-    private async Task<JObject> RunCoreAsync(IReadOnlyCollection<string>? fqns, bool collectCoverage, bool profile, CancellationToken ct, bool build = true, bool failedOnly = false)
+    private async Task<JObject> RunCoreAsync(IReadOnlyCollection<string>? fqns, bool collectCoverage, bool profile, CancellationToken ct, bool build = true, bool failedOnly = false, string? profilerToolId = null)
     {
         var (broker, type, err) = await AcquireAsync(ct);
         if (broker == null) return new JObject { ["ok"] = false, ["error"] = err };
@@ -81,7 +81,7 @@ internal sealed class TestRunner
 
         try
         {
-            object? resp = await RunTestsAsyncReflect(broker, type!, fqns, collectCoverage, profile, callbackOptions, ct, failedOnly);
+            object? resp = await RunTestsAsyncReflect(broker, type!, fqns, collectCoverage, profile, callbackOptions, ct, failedOnly, profilerToolId);
             report["mode"] = profile ? "Profile" : "Run";
             report["coverageRequested"] = collectCoverage;
             report["response"] = DescribeResponse(resp);
@@ -160,14 +160,14 @@ internal sealed class TestRunner
                 if ((bool?)r["ok"] != true) { st.Fail("run failed: " + (string?)r["error"]); return; }
 
                 var tests = (r["tests"] as JArray) ?? new JArray();
-                if (tests.Count == 0) { st.RecordInconclusive(); await Task.Delay(700, ct); continue; }
+                if (tests.Count == 0) { st.RecordInconclusive(); await WaitForEngineIdleAsync(700, 5000, ct); continue; }
 
                 var fails = tests.Where(t => !IsPassed((JObject)t))
                     .Select(t => ((JToken?)t["outcome"], (JToken?)t["errorMessage"], (JToken?)t["errorStackTrace"]))
                     .ToList();
                 st.RecordRun(fails);
                 if (fails.Count > 0 && !st.MeasureRate) { st.Finish(capHit: false); return; }
-                await Task.Delay(500, ct); // settle so the engine actually runs the next one
+                await WaitForEngineIdleAsync(500, 5000, ct); // real idle-wait so the engine actually runs the next one
             }
             st.Finish(capHit: false);
         }
@@ -179,6 +179,41 @@ internal sealed class TestRunner
 
     /// <summary>Ensure the in-proc engine is acquired (call before <see cref="StartDebugRun"/>).</summary>
     public async Task<bool> EnsureAcquiredAsync(CancellationToken ct) { var (b, _, _) = await AcquireAsync(ct); return b != null; }
+
+    /// <summary>
+    /// ROADMAP "hunt idle-wait": between hunt runs, wait for the engine to actually go IDLE instead of
+    /// a blind delay — engine cancellation churn between back-to-back runs is what made measureRate
+    /// under-sample. The OperationBroker implements IOperationState (same object as IRequestFactory);
+    /// its State enum name contains "InProgress"/"Started"/"Pending" while busy. Everything is guarded:
+    /// if the interface/property shape drifts, fall back to the old fixed delay.
+    /// </summary>
+    private async Task WaitForEngineIdleAsync(int fallbackDelayMs, int timeoutMs, CancellationToken ct)
+    {
+        try
+        {
+            var stateProp = FindType("Microsoft.VisualStudio.TestWindow.Extensibility.IOperationState", AsmInternal)
+                ?.GetProperty("State");
+            if (_broker == null || stateProp == null)
+            {
+                await Task.Delay(fallbackDelayMs, ct).ConfigureAwait(true);
+                return;
+            }
+
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            while (sw.ElapsedMilliseconds < timeoutMs)
+            {
+                ct.ThrowIfCancellationRequested();
+                string state = stateProp.GetValue(_broker)?.ToString() ?? "";
+                bool busy = state.IndexOf("InProgress", StringComparison.OrdinalIgnoreCase) >= 0
+                         || state.IndexOf("Started", StringComparison.OrdinalIgnoreCase) >= 0
+                         || state.IndexOf("Pending", StringComparison.OrdinalIgnoreCase) >= 0;
+                if (!busy) { await Task.Delay(150, ct).ConfigureAwait(true); return; } // settle tick after idle
+                await Task.Delay(200, ct).ConfigureAwait(true);
+            }
+        }
+        catch (OperationCanceledException) { throw; }
+        catch { await Task.Delay(fallbackDelayMs, ct).ConfigureAwait(true); } // shape drifted -> old behavior
+    }
 
     /// <summary>Open Test Explorer + build the solution (for the specified-exception path that skips the pre-hunt).</summary>
     public async Task EnsureBuiltAsync(CancellationToken ct) { await EnsureLoadedAsync(ct); await BuildSolutionAsync(ct); }
@@ -206,7 +241,7 @@ internal sealed class TestRunner
             builtOnce = true;
             if ((bool?)r["ok"] != true) return new JObject { ["reproduced"] = false, ["error"] = "run failed: " + (string?)r["error"] };
             var tests = (r["tests"] as JArray) ?? new JArray();
-            if (tests.Count == 0) { await Task.Delay(700, ct).ConfigureAwait(true); continue; }
+            if (tests.Count == 0) { await WaitForEngineIdleAsync(700, 5000, ct).ConfigureAwait(true); continue; }
             executed++;
             var fail = tests.FirstOrDefault(t => !IsPassed((JObject)t)) as JObject;
             if (fail != null)
@@ -221,7 +256,7 @@ internal sealed class TestRunner
                     ["errorStackTrace"] = fail["errorStackTrace"],
                 };
             }
-            await Task.Delay(400, ct).ConfigureAwait(true);
+            await WaitForEngineIdleAsync(400, 5000, ct).ConfigureAwait(true);
         }
         return new JObject { ["reproduced"] = false, ["executed"] = executed, ["note"] = $"no failure in {executed} run(s)" };
     }
@@ -284,11 +319,11 @@ internal sealed class TestRunner
 
     // ---------------- run variants ----------------
 
-    private async Task<object?> RunTestsAsyncReflect(object broker, Type type, IReadOnlyCollection<string>? fqns, bool coverage, bool profile, object? callbackOptions, CancellationToken ct, bool failedOnly = false)
+    private async Task<object?> RunTestsAsyncReflect(object broker, Type type, IReadOnlyCollection<string>? fqns, bool coverage, bool profile, object? callbackOptions, CancellationToken ct, bool failedOnly = false, string? profilerToolId = null)
     {
         // RunTestsAsync(TestHostMode mode, TestFilterOptions filter, TestRunOptions runOptions, TestCallbackOptions callbackOptions, ct)
         object? filter = failedOnly ? BuildStateFilter("Failed") : BuildScopeFilter(fqns);
-        object runOpts = BuildRunOptions(coverage);
+        object runOpts = BuildRunOptions(coverage, profile, profilerToolId);
         var modeType = FindType("Microsoft.VisualStudio.TestWindow.Messages.TestHostMode", AsmInternal)!;
         object mode = Enum.ToObject(modeType, profile ? 2 : 0);
         var m = type.GetMethod("RunTestsAsync");
@@ -392,11 +427,32 @@ internal sealed class TestRunner
         return ctor.Invoke(new object?[] { list, null });
     }
 
-    private object BuildRunOptions(bool coverage)
+    /// <summary>
+    /// The Diagnostics Hub "CPU Usage" tool id — the default for profile runs. EXPERIMENTAL: sourced
+    /// from DiagnosticsHub .diagsession configs, not a documented API; overridable per call, and set
+    /// via a name-scanned property so a TestRunOptions shape drift degrades to the old no-op profile.
+    /// </summary>
+    private const string DefaultProfilerToolId = "96f1f3e8-f762-4cd2-8ed9-68158bce1a4c";
+
+    private object BuildRunOptions(bool coverage, bool profile = false, string? profilerToolId = null)
     {
         var t = FindType("Microsoft.VisualStudio.TestWindow.Extensibility.TestRunOptions", AsmInternal)!;
         object o = Activator.CreateInstance(t)!;
         if (coverage) t.GetProperty("CollectCoverage")?.SetValue(o, (bool?)true);
+        if (profile && Guid.TryParse(profilerToolId ?? DefaultProfilerToolId, out var toolGuid))
+        {
+            // Property name is engine-internal: scan for the *Profiler*Id-shaped member instead of
+            // hardcoding, and match its declared type (Guid vs Guid? vs string).
+            var pp = t.GetProperties(BindingFlags.Public | BindingFlags.Instance)
+                .FirstOrDefault(p => p.CanWrite && p.Name.IndexOf("Profiler", StringComparison.OrdinalIgnoreCase) >= 0);
+            try
+            {
+                if (pp?.PropertyType == typeof(Guid)) pp.SetValue(o, toolGuid);
+                else if (pp?.PropertyType == typeof(Guid?)) pp.SetValue(o, (Guid?)toolGuid);
+                else if (pp?.PropertyType == typeof(string)) pp.SetValue(o, toolGuid.ToString());
+            }
+            catch { /* shape drift -> profile falls back to its old Cancelled note */ }
+        }
         return o;
     }
 

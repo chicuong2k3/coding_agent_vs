@@ -77,7 +77,10 @@ internal static class DebuggerReader
         }
         catch (Exception e) { Log(snap, $"stoppedAt unavailable: {e.Message}"); }
 
-        // Call stack (innermost first) - function names only for now.
+        // Call stack (innermost first). Per-frame source (ROADMAP "per-frame source"): EnvDTE90a's
+        // StackFrame2 exposes FileName/LineNumber per frame - no AD7 needed after all (same lesson as
+        // break-on-thrown: the newer automation interface has it, just cast up). Frames without
+        // symbols (framework code) simply omit file/line.
         try
         {
             var frames = new JArray();
@@ -89,7 +92,21 @@ internal static class DebuggerReader
                 {
                     if (n >= MaxFrames) { frames.Add(TruncMarker($"capped at {MaxFrames} frames; deeper frames omitted")); break; }
                     n++;
-                    frames.Add(new JObject { ["function"] = SafeFunction(f) });
+                    var fo = new JObject { ["function"] = SafeFunction(f) };
+                    try
+                    {
+                        if (f is EnvDTE90a.StackFrame2 sf2)
+                        {
+                            string? file = sf2.FileName;
+                            if (!string.IsNullOrEmpty(file))
+                            {
+                                fo["file"] = file;
+                                fo["line"] = (int)sf2.LineNumber;
+                            }
+                        }
+                    }
+                    catch { /* no symbols / native frame - name-only is fine */ }
+                    frames.Add(fo);
                 }
             }
             snap["callStack"] = frames;
@@ -421,7 +438,15 @@ internal static class DebuggerReader
                     {
                         if (fn >= MaxThreadFrames) { frames.Add($"… capped at {MaxThreadFrames} frames"); break; }
                         fn++;
-                        frames.Add(SafeFunction(f));
+                        // Per-frame source as a " (file:line)" suffix (string frames keep ApplyWaitFlags' matching).
+                        string entry = SafeFunction(f);
+                        try
+                        {
+                            if (f is EnvDTE90a.StackFrame2 sf2 && !string.IsNullOrEmpty(sf2.FileName))
+                                entry += $" ({sf2.FileName}:{sf2.LineNumber})";
+                        }
+                        catch { /* no symbols - name-only */ }
+                        frames.Add(entry);
                     }
                 }
                 catch { }

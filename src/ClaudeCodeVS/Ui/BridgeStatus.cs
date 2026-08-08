@@ -67,9 +67,12 @@ internal static class BridgeStatus
     public static int Turns { get; private set; }
     public static string? Model { get; private set; }
 
-    public static void SetUsage(Usage session, Usage latest, int turns, string? model)
+    /// <summary>One-line usage breakdown: exact subagent split + estimated top tool context consumers.</summary>
+    public static string? UsageBreakdown { get; private set; }
+
+    public static void SetUsage(Usage session, Usage latest, int turns, string? model, string? breakdown = null)
     {
-        Session = session; Latest = latest; Turns = turns; Model = model;
+        Session = session; Latest = latest; Turns = turns; Model = model; UsageBreakdown = breakdown;
         HasUsage = true;
         Changed?.Invoke();
     }
