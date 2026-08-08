@@ -29,11 +29,17 @@ internal static class McpInstaller
         ("vs-semantic", new[] { "-Route", "/mcp-semantic" }),
     };
 
-    public static void EnsureInstalled(string workspaceRoot)
+    public static void EnsureInstalled(string workspaceRoot, AgentProfile? agent = null)
     {
+        agent ??= AgentProfile.ClaudeCode;
+        if (!agent.SupportsMcpRegistration)
+        {
+            Log.Info($"mcp: {agent.DisplayName} has no project MCP registration; skipping install");
+            return;
+        }
         try
         {
-            var claudeDir = Path.Combine(workspaceRoot, ".claude");
+            var claudeDir = Path.Combine(workspaceRoot, agent.ConfigDirName);
             Directory.CreateDirectory(claudeDir);
 
             // 1) (Over)write the shim from the embedded copy, so updates ship with the extension.
@@ -43,7 +49,7 @@ internal static class McpInstaller
             //    relative -File path resolves against the CLI's cwd (the workspace root), matching where
             //    the shim was written. We always (re)write OUR entry so command/args updates ship, but
             //    leave the rest of the file untouched.
-            var mcpPath = Path.Combine(workspaceRoot, ".mcp.json");
+            var mcpPath = Path.Combine(workspaceRoot, agent.McpConfigFileName);
             JObject root;
             if (File.Exists(mcpPath))
             {
@@ -71,7 +77,7 @@ internal static class McpInstaller
             bool changed = false;
             foreach (var (name, extraArgs) in Servers)
             {
-                var argv = new JArray("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $".claude/{ShimScript}");
+                var argv = new JArray("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $"{agent.ConfigDirName}/{ShimScript}");
                 foreach (var a in extraArgs) argv.Add(a);
                 var desired = new JObject
                 {

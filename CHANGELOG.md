@@ -1,5 +1,41 @@
 # Changelog
 
+## 1.17.0 - 2026-08-08
+
+The ROADMAP sweep — five items land in one release. Per-feature test guide: [`docs/TESTING-NEW-FEATURES.md`](docs/TESTING-NEW-FEATURES.md).
+
+### Features
+
+- **Transitive callees.** `vs_call_hierarchy direction:callees` now recurses the callee graph (depth-capped, cycle-guarded, budget-signaled — same discipline as callers). Only in-solution callees recurse; framework targets are leaves.
+- **`vs_rename` (vs-semantic).** Solution-wide semantic rename via Roslyn `Renamer` — resolves through interfaces, overrides, partials, generics, aliases. Preview by default (per-file edit counts + sample lines); `apply=true` commits as ONE VS undo unit (Ctrl+Z reverts everything); fails cleanly if the solution changed mid-rename.
+- **Tracepoints (vs-debug, gated drive).** `vs_set_tracepoint(file, line, expressions[], maxHits)` = log-and-continue probe without editing code: each pass evaluates the expressions, records `{seq, time, values}`, auto-continues. `vs_get_tracepoint` polls the timeline; `vs_remove_tracepoint` disarms; auto-disables at `maxHits`.
+- **Profiling (vs-debug).** `vs_perf_counters` (CPU %, GC, alloc rate, threadpool via dotnet-counters), `vs_trace_cpu` (top hot methods via dotnet-trace cpu-sampling), `vs_gc_dump` (top types by size via dotnet-gcdump; dump kept for VS/PerfView). Default PID = the current debuggee; clear install hint when a CLI is missing.
+- **Capture region crop.** `region:{x,y,width,height}` on `vs_capture_window` / `vs_capture_screen` — crop dense screens to the area of interest (full detail, fewer tokens). Out-of-bounds clamps.
+
+### Fixes (PR #1 review)
+
+- Profiling CLI processes are now disposed and killed on cancellation/timeout (no orphaned `dotnet-trace` holding a session).
+- `getDiagnostics` precise-span upgrade now MERGES with Error List entries (dedupe by line+message) instead of replacing — MSBuild/analyzer-only entries for the same file are kept.
+- Manifest installation target stays `[17.14,)` — DELIBERATE: the unbounded upper end lets future VS majors install without a re-release. The Qodo compliance rule 2396913 (`[17.14,19.0)`) predates this decision and should be updated to match.
+
+## 1.16.0 - 2026-08-08
+
+Two ROADMAP items land: precise diagnostics and the fix-verify shortcut.
+
+### Features
+
+- **Roslyn-precise diagnostic ranges.** `getDiagnostics` now returns real start/end spans for C#/VB from each document's semantic model (`RoslynReader.GetPreciseDiagnosticsAsync`), so the model can anchor a fix to the exact bad expression instead of a whole line. Files Roslyn doesn't know (C++, loose files) keep the Error List point ranges; a Roslyn-clean file keeps its Error List entries (build-only errors). Per-document semantic models only — never a whole-solution compile.
+- **`vs_run_affected` (vs-debug MCP)** — "run the tests that touch the code I edited": pass the changed file(s); a Roslyn caller-graph BFS (depth 6, cycle-guarded, 800-node budget with `{truncated}` signaling) walks from every method/property declared there UP to test methods (`[Fact]/[Theory]/[Test]/[TestMethod]/[TestCase]`), then runs exactly those in ONE Test Explorer pass (one `Scope.ForSymbol` per FQN — `TestRunner.RunManyAsync`). Returns the affected list with `callDistance` (hops from the change) + per-test outcomes; `listOnly=true` for just the list.
+
+## 1.15.0 - 2026-08-08
+
+**Multi-agent groundwork** — the agent-specific surface is now one class, `AgentProfile` (`src/ClaudeCodeVS.Protocol/AgentProfile.cs`), with Claude Code as the default instance. Full analysis + coupling matrix: [`docs/MULTI-AGENT.md`](docs/MULTI-AGENT.md) (new).
+
+### Changes
+
+- **`AgentProfile`**: lockfile dir, CLI binary, env vars, auth-header name, MCP server name, config dir/settings/`.mcp.json` paths, plus `SupportsHooks`/`SupportsMcpRegistration` capability gates. `Lockfile`, `IdeWebSocketServer`, `McpServer`, both installers, and both launch paths (native terminal + external console) now take the profile; behavior for Claude Code is byte-identical. A second agent (Oh My Pi, OpenCode, …) is `new AgentProfile(...)` + swapping `BridgeHost._agent`.
+- **Manifest**: installation target opened from `[17.14,19.0)` to `[17.14,)` so future VS majors aren't blocked by the upper bound.
+
 ## 1.14.4 - 2026-07-31
 
 Three fixes straight from Marketplace feedback.

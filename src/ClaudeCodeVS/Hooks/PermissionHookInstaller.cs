@@ -36,15 +36,21 @@ internal static class PermissionHookInstaller
     /// session that reaches the bridge. Stdin flows through to the script, and its exit code/stdout are
     /// preserved, so hook semantics are unchanged when the script IS present.
     /// </summary>
-    private static string Command(string script) =>
+    private static string Command(string configDir, string script) =>
         "powershell -NoProfile -ExecutionPolicy Bypass -Command "
-        + $"\"if (Test-Path '.claude/{script}') {{ & '.claude/{script}' }} else {{ exit 0 }}\"";
+        + $"\"if (Test-Path '{configDir}/{script}') {{ & '{configDir}/{script}' }} else {{ exit 0 }}\"";
 
-    public static void EnsureInstalled(string workspaceRoot)
+    public static void EnsureInstalled(string workspaceRoot, AgentProfile? agent = null)
     {
+        agent ??= AgentProfile.ClaudeCode;
+        if (!agent.SupportsHooks)
+        {
+            Log.Info($"hooks: {agent.DisplayName} has no hook system; skipping install");
+            return;
+        }
         try
         {
-            var claudeDir = Path.Combine(workspaceRoot, ".claude");
+            var claudeDir = Path.Combine(workspaceRoot, agent.ConfigDirName);
             Directory.CreateDirectory(claudeDir);
 
             // 1) (Over)write the hook scripts from the embedded copies, so updates ship with the extension.
@@ -54,7 +60,7 @@ internal static class PermissionHookInstaller
             File.WriteAllText(Path.Combine(claudeDir, NotifyScript), ReadEmbeddedScript(NotifyScript));
 
             // 2) Merge hook entries into .claude/settings.json, preserving any existing content.
-            var settingsPath = Path.Combine(claudeDir, "settings.json");
+            var settingsPath = Path.Combine(claudeDir, agent.SettingsFileName);
             JObject root;
             if (File.Exists(settingsPath))
             {
@@ -80,10 +86,11 @@ internal static class PermissionHookInstaller
                 root["hooks"] = hooks;
             }
 
-            bool addedPre = EnsureHook(hooks, "PreToolUse", "Edit|Write|MultiEdit", PermissionScript, PermissionTimeoutSeconds);
-            bool addedStop = EnsureHook(hooks, "Stop", matcher: null, UsageScript, UsageTimeoutSeconds);
-            bool addedDebug = EnsureHook(hooks, "UserPromptSubmit", matcher: null, DebugScript, DebugTimeoutSeconds);
-            bool addedNotify = EnsureHook(hooks, "Notification", matcher: null, NotifyScript, NotifyTimeoutSeconds);
+            string cfgDir = agent.ConfigDirName;
+            bool addedPre = EnsureHook(hooks, "PreToolUse", "Edit|Write|MultiEdit", cfgDir, PermissionScript, PermissionTimeoutSeconds);
+            bool addedStop = EnsureHook(hooks, "Stop", matcher: null, cfgDir, UsageScript, UsageTimeoutSeconds);
+            bool addedDebug = EnsureHook(hooks, "UserPromptSubmit", matcher: null, cfgDir, DebugScript, DebugTimeoutSeconds);
+            bool addedNotify = EnsureHook(hooks, "Notification", matcher: null, cfgDir, NotifyScript, NotifyTimeoutSeconds);
 
             if (!addedPre && !addedStop && !addedDebug && !addedNotify)
             {
@@ -105,7 +112,7 @@ internal static class PermissionHookInstaller
     /// existing entry whose command drifted from the current form (e.g. the pre-1.14.4 unguarded
     /// "-File .claude/x.ps1" shape). Returns true if it changed settings.
     /// </summary>
-    private static bool EnsureHook(JObject hooks, string eventName, string? matcher, string script, int timeoutSeconds)
+    private static bool EnsureHook(JObject hooks, string eventName, string? matcher, string configDir, string script, int timeoutSeconds)
     {
         // Same clone-on-reparent hazard as above: keep the existing array in place, only assign a new one.
         if (hooks[eventName] is not JArray arr)
@@ -117,7 +124,7 @@ internal static class PermissionHookInstaller
         var existing = FindOurHook(arr, script);
         if (existing != null)
         {
-            var want = Command(script);
+            var want = Command(configDir, script);
             if (string.Equals((string?)existing["command"], want, StringComparison.Ordinal)) return false;
             // Migrate IN PLACE: setting a value property on the EXISTING object is safe - it's
             // re-parenting a token into a new parent that clones (the 1.11.0 lesson), not this.
@@ -130,7 +137,7 @@ internal static class PermissionHookInstaller
             ["hooks"] = new JArray(new JObject
             {
                 ["type"] = "command",
-                ["command"] = Command(script),
+                ["command"] = Command(configDir, script),
                 ["timeout"] = timeoutSeconds,
             }),
         };

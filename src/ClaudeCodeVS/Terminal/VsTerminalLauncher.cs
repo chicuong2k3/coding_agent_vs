@@ -32,7 +32,7 @@ internal static class VsTerminalLauncher
     /// <summary>How long the native-terminal attempt may take before the external console takes over.</summary>
     private const int LaunchTimeoutMs = 10_000;
 
-    public static async Task<bool> TryLaunchAsync(string? workingDirectory, int ssePort, CancellationToken ct)
+    public static async Task<bool> TryLaunchAsync(string? workingDirectory, int ssePort, AgentProfile agent, CancellationToken ct)
     {
         try
         {
@@ -42,7 +42,7 @@ internal static class VsTerminalLauncher
             // already cancelled it (so a late completion aborts instead of opening a second terminal).
             var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             timeoutCts.CancelAfter(LaunchTimeoutMs);
-            Task<bool> attempt = TryLaunchCoreAsync(workingDirectory, ssePort, timeoutCts.Token);
+            Task<bool> attempt = TryLaunchCoreAsync(workingDirectory, ssePort, agent, timeoutCts.Token);
             _ = attempt.ContinueWith(t => { _ = t.Exception; timeoutCts.Dispose(); }, TaskScheduler.Default);
 
             // The grace over CancelAfter lets a cancellation-honoring call surface as a clean
@@ -62,7 +62,7 @@ internal static class VsTerminalLauncher
         }
     }
 
-    private static async Task<bool> TryLaunchCoreAsync(string? workingDirectory, int ssePort, CancellationToken ct)
+    private static async Task<bool> TryLaunchCoreAsync(string? workingDirectory, int ssePort, AgentProfile agent, CancellationToken ct)
     {
         try
         {
@@ -137,10 +137,11 @@ internal static class VsTerminalLauncher
                     return false;
                 }
 
-                // /K keeps the window open after claude exits (parity with today's cmd.exe path); env vars are
+                // /K keeps the window open after the CLI exits (parity with today's cmd.exe path); env vars are
                 // baked into an inline `set` chain since TerminalWindowOptions has no EnvironmentVariables property.
-                string args = $"/K set ENABLE_IDE_INTEGRATION=true&&set CLAUDE_CODE_SSE_PORT={ssePort}&&claude";
-                profile = profileCtor.Invoke(new object?[] { "Claude Code", "cmd.exe", args, false });
+                string setChain = string.Join("&&", agent.EnvironmentFor(ssePort).Select(kv => $"set {kv.Key}={kv.Value}"));
+                string args = $"/K {setChain}&&{agent.Binary}";
+                profile = profileCtor.Invoke(new object?[] { agent.DisplayName, "cmd.exe", args, false });
 
                 // TerminalWindowOptions.Profile alone is ignored unless the profile is first registered with the
                 // service - without this, CreateTerminalWindowAsync silently falls back to the user's default shell.
@@ -162,7 +163,7 @@ internal static class VsTerminalLauncher
                 if (create != null)
                 {
                     object options = Activator.CreateInstance(windowOptionsType!)!; // ctor already defaults Focus/AllowUserInput/AutoResize=true
-                    windowOptionsType!.GetProperty("Name")?.SetValue(options, "Claude Code");
+                    windowOptionsType!.GetProperty("Name")?.SetValue(options, agent.DisplayName);
                     windowOptionsType.GetProperty("WorkingDirectory")?.SetValue(options, workingDirectory);
                     windowOptionsType.GetProperty("Profile")?.SetValue(options, profile);
                     windowOptionsType.GetProperty("Focus")?.SetValue(options, true);
@@ -192,7 +193,7 @@ internal static class VsTerminalLauncher
                         Log.Warn("Native VS terminal: neither CreateTerminalWindowAsync (18.x) nor a compatible CreateTerminalAsync (17.x) found - falling back to external console.");
                         return false;
                     }
-                    guidResult = await UnwrapAsync(createLegacy.Invoke(terminalService, new object?[] { ct, "Claude Code", profile, workingDirectory }));
+                    guidResult = await UnwrapAsync(createLegacy.Invoke(terminalService, new object?[] { ct, agent.DisplayName, profile, workingDirectory }));
                     surface = "17.x legacy surface";
 
                     // The old surface has no Focus option; ShowAsync is its bring-to-front. Best-effort.
@@ -214,7 +215,7 @@ internal static class VsTerminalLauncher
                     return false;
                 }
 
-                Log.Info($"Launched Claude Code in VS's native Terminal window ({surface}, port {ssePort}, cwd '{workingDirectory ?? "(default)"}').");
+                Log.Info($"Launched {agent.DisplayName} in VS's native Terminal window ({surface}, port {ssePort}, cwd '{workingDirectory ?? "(default)"}').");
                 return true;
             }
             finally

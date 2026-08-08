@@ -72,6 +72,39 @@ internal abstract class CaptureToolBase : IIdeTool
 
     protected static JObject Prop(string type, string description)
         => new JObject { ["type"] = type, ["description"] = description };
+
+    /// <summary>The shared region schema: crop the capture to {x,y,width,height} (capture-pixel coords).</summary>
+    protected static JObject RegionProp() => new JObject
+    {
+        ["type"] = "object",
+        ["description"] = "Optional crop rectangle in capture pixels (top-left origin) - for dense screens, "
+                        + "crop to the area of interest so the image reads at full detail and costs fewer tokens.",
+        ["properties"] = new JObject
+        {
+            ["x"] = Prop("integer", "Left edge (default 0)."),
+            ["y"] = Prop("integer", "Top edge (default 0)."),
+            ["width"] = Prop("integer", "Crop width (default: to the right edge)."),
+            ["height"] = Prop("integer", "Crop height (default: to the bottom edge)."),
+        },
+    };
+
+    /// <summary>Apply an optional 'region' crop to captured PNG bytes. Out-of-bounds is clamped, not an error.</summary>
+    protected static byte[] ApplyRegion(JToken? args, byte[] png, ref int width, ref int height)
+    {
+        if (args?["region"] is not JObject r) return png;
+        int x = Math.Max(0, (int?)r["x"] ?? 0);
+        int y = Math.Max(0, (int?)r["y"] ?? 0);
+        int w = Math.Min((int?)r["width"] ?? int.MaxValue, width - x);
+        int h = Math.Min((int?)r["height"] ?? int.MaxValue, height - y);
+        if (x >= width || y >= height || w <= 0 || h <= 0) return png; // degenerate crop -> keep full image
+
+        using var src = new System.Drawing.Bitmap(new System.IO.MemoryStream(png));
+        using var dst = src.Clone(new System.Drawing.Rectangle(x, y, w, h), src.PixelFormat);
+        using var ms = new System.IO.MemoryStream();
+        dst.Save(ms, System.Drawing.Imaging.ImageFormat.Png);
+        width = w; height = h;
+        return ms.ToArray();
+    }
 }
 
 /// <summary>
@@ -97,6 +130,7 @@ internal sealed class VsCaptureWindowTool : CaptureToolBase
             ["target"] = Prop("string", "'debuggee' (default) | 'ide' | 'window' (requires title)."),
             ["title"] = Prop("string", "For target 'window': case-insensitive substring of the window title to capture."),
             ["pid"] = Prop("integer", "For target 'debuggee' in a multi-process session: which debugged process id to capture."),
+            ["region"] = RegionProp(),
         },
     };
 
@@ -188,6 +222,7 @@ internal sealed class VsCaptureWindowTool : CaptureToolBase
         }
 
         var png = WindowCapture.CaptureWindow(hwnd, out int width, out int height);
+        png = ApplyRegion(args, png, ref width, ref height);
         return StageAndReport(png, $"capture-{target}", what, width, height);
     }
 }
@@ -211,6 +246,7 @@ internal sealed class VsCaptureScreenTool : CaptureToolBase
         {
             ["monitor"] = Prop("integer", "0-based monitor index; omit for the primary monitor."),
             ["all"] = Prop("boolean", "true = capture the whole virtual screen (all monitors) in one image."),
+            ["region"] = RegionProp(),
         },
     };
 
@@ -219,6 +255,7 @@ internal sealed class VsCaptureScreenTool : CaptureToolBase
         int? monitor = (int?)args?["monitor"];
         bool all = (bool?)args?["all"] == true;
         var png = WindowCapture.CaptureScreen(monitor, all, out int width, out int height, out string what);
+        png = ApplyRegion(args, png, ref width, ref height);
         return Task.FromResult(StageAndReport(png, "capture-screen", what, width, height));
     }
 }

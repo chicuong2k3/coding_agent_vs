@@ -47,7 +47,9 @@ jobs:
         continue-on-error: true
         shell: pwsh
         run: |
-          msbuild src/ClaudeCodeVS/ClaudeCodeVS.csproj /t:Restore,Build /p:Configuration=Release /p:DeployExtension=false /v:minimal /nologo
+          # /restore, not /t:Restore,Build: the VSSDK.BuildTools nuget targets are only imported when
+          # restore finishes before evaluation - one-shot Restore,Build compiles but skips the .vsix.
+          msbuild src/ClaudeCodeVS/ClaudeCodeVS.csproj /restore /t:Build /p:Configuration=Release /p:DeployExtension=false /v:minimal /nologo
           $vsix = "src/ClaudeCodeVS/bin/Release/ClaudeCodeVS.vsix"
           if (Test-Path $vsix) { "vsix=$vsix" >> $env:GITHUB_OUTPUT } else { Write-Host "::warning::VSIX build produced no artifact - releasing notes only." }
 

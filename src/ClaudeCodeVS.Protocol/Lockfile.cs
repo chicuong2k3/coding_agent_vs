@@ -28,23 +28,20 @@ public sealed class Lockfile
         _doc = doc;
     }
 
-    private static string IdeDir =>
-        System.IO.Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            ".claude", "ide");
-
     /// <summary>
     /// Pick a free loopback port, then write the lockfile for it. We bind a throwaway
     /// TcpListener to port 0 (OS assigns a free port), read the assignment, and release it.
     /// There's a tiny TOCTOU window before the WS server grabs the port - acceptable in practice.
+    /// The lockfile directory comes from the agent profile (docs/MULTI-AGENT.md: per-agent IdeDir).
     /// </summary>
-    public static Lockfile CreateForFreePort(IReadOnlyList<string> workspaceFolders)
+    public static Lockfile CreateForFreePort(IReadOnlyList<string> workspaceFolders, AgentProfile? agent = null)
     {
-        Directory.CreateDirectory(IdeDir);
+        string ideDir = (agent ?? AgentProfile.ClaudeCode).IdeDir;
+        Directory.CreateDirectory(ideDir);
 
         int port = PickFreePort();
         var token = Guid.NewGuid().ToString();
-        var path = System.IO.Path.Combine(IdeDir, $"{port}.lock");
+        var path = System.IO.Path.Combine(ideDir, $"{port}.lock");
 
         var self = Process.GetCurrentProcess();
         var doc = new LockfileDoc
@@ -104,11 +101,12 @@ public sealed class Lockfile
     /// dead WS server blocks reconnection (issue #5043). We ONLY delete dead-PID files - never
     /// another live IDE's (e.g. a running VS Code) lockfile.
     /// </summary>
-    public static void ReapStale()
+    public static void ReapStale(AgentProfile? agent = null)
     {
-        if (!Directory.Exists(IdeDir)) return;
+        string ideDir = (agent ?? AgentProfile.ClaudeCode).IdeDir;
+        if (!Directory.Exists(ideDir)) return;
 
-        foreach (var file in Directory.EnumerateFiles(IdeDir, "*.lock"))
+        foreach (var file in Directory.EnumerateFiles(ideDir, "*.lock"))
         {
             try
             {

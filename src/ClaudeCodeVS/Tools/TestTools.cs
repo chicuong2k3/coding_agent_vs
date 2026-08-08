@@ -369,3 +369,59 @@ internal sealed class VsRerunFailedTool : IIdeTool
         return result;
     }
 }
+
+/// <summary>
+/// vs_run_affected - the fix-verify shortcut: given the files just edited, find the tests whose call
+/// graph reaches into them (Roslyn caller-graph BFS) and run exactly those in ONE engine pass.
+/// </summary>
+internal sealed class VsRunAffectedTool : IIdeTool
+{
+    private readonly TestRunner _runner;
+    public VsRunAffectedTool(TestRunner runner) => _runner = runner;
+
+    public string Name => "vs_run_affected";
+    public string Description =>
+        "Run the tests AFFECTED by a code change: pass the file(s) you edited; the Roslyn caller graph "
+        + "finds every test that (transitively) calls into anything declared there, and runs exactly those "
+        + "in one Test Explorer pass. Returns the affected-test list (with callDistance = hops from the "
+        + "change) plus per-test outcomes. listOnly=true skips the run. Managed (C#/VB) solutions.";
+
+    public JToken Schema => new JObject
+    {
+        ["type"] = "object",
+        ["properties"] = new JObject
+        {
+            ["files"] = new JObject
+            {
+                ["type"] = "array",
+                ["items"] = new JObject { ["type"] = "string" },
+                ["description"] = "Absolute or workspace-relative paths of the changed source files.",
+            },
+            ["listOnly"] = new JObject { ["type"] = "boolean", ["description"] = "Only compute the affected-test list; don't run them (default false)." },
+        },
+        ["required"] = new JArray("files"),
+    };
+
+    public async Task<object> InvokeAsync(JToken args, CancellationToken ct)
+    {
+        var files = (args["files"] as JArray)?.Select(t => (string?)t).Where(s => !string.IsNullOrEmpty(s)).Cast<string>().ToList() ?? new List<string>();
+        bool listOnly = (bool?)args["listOnly"] ?? false;
+        if (files.Count == 0) return new JObject { ["error"] = "Pass at least one file path in 'files'." };
+
+        var affected = await RoslynReader.FindAffectedTestsAsync(files, ct);
+        if ((bool?)affected["available"] != true) return affected;
+
+        var fqns = (affected["tests"] as JArray)?.Select(t => (string?)t["fullyQualifiedName"]).Where(s => s != null).Cast<string>().ToList() ?? new List<string>();
+        Log.Info($"vs_run_affected({files.Count} file(s), listOnly={listOnly}) -> {fqns.Count} affected test(s)");
+        Ui.BridgeStatus.RecordDebugInspect();
+
+        if (listOnly || fqns.Count == 0)
+        {
+            if (fqns.Count == 0) affected["note"] = (string?)affected["note"] ?? "No tests reach the changed code through the caller graph.";
+            return affected;
+        }
+
+        var run = await _runner.RunManyAsync(fqns, ct);
+        return new JObject { ["affected"] = affected, ["run"] = run };
+    }
+}

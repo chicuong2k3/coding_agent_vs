@@ -286,3 +286,40 @@ internal sealed class VsTypeHierarchyTool : IIdeTool
         return result;
     }
 }
+
+/// <summary>
+/// vs_rename — the one MUTATING semantic tool: Roslyn Renamer rename-symbol (catches interfaces,
+/// overrides, generics, aliases — everything grep-rename misses). Preview by default; apply=true
+/// commits as ONE VS undo unit via workspace.TryApplyChanges (Ctrl+Z reverts the whole rename).
+/// </summary>
+internal sealed class VsRenameTool : IIdeTool
+{
+    public string Name => "vs_rename";
+    public string Description =>
+        "Semantically rename a C#/VB symbol solution-wide via Roslyn's Renamer - resolves through "
+        + "interfaces, overrides, partials, generics, and aliases (grep-rename misses these). Address the "
+        + "symbol by symbolId (from vs_search_symbols) or file+line, pass newName. PREVIEW by default "
+        + "(per-file edit counts + sample lines); re-run with apply=true to commit - one VS undo unit, "
+        + "Ctrl+Z in VS reverts everything.";
+
+    public JToken Schema
+    {
+        get
+        {
+            var s = SemanticSchemas.Target("rename");
+            var props = (JObject)s["properties"]!;
+            props["newName"] = new JObject { ["type"] = "string", ["description"] = "The new identifier." };
+            props["apply"] = new JObject { ["type"] = "boolean", ["description"] = "Commit the rename (default false = preview only)." };
+            s["required"] = new JArray("newName");
+            return s;
+        }
+    }
+
+    public async Task<object> InvokeAsync(JToken args, CancellationToken ct)
+    {
+        var result = await RoslynReader.RenameAsync(args ?? new JObject(), ct);
+        Log.Info($"vs_rename(newName={(string?)args?["newName"]}, apply={(bool?)args?["apply"] ?? false}) -> "
+            + $"files={(int?)result["fileCount"] ?? 0}, edits={(int?)result["totalEdits"] ?? 0}, applied={(bool?)result["applied"]}");
+        return result;
+    }
+}

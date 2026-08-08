@@ -1,3 +1,4 @@
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using ClaudeCodeVs.Debugging;
@@ -302,4 +303,83 @@ internal sealed class VsDetachTool : DriveToolBase
     public override string Description => "Detach the debugger from all processes (they keep running). The counterpart to vs_attach. Driving enabled.";
     public override JToken Schema => NoArgs();
     protected override Task<JObject> RunAsync(JToken a, CancellationToken ct) => Driver.DetachAsync(ct);
+}
+
+/// <summary>
+/// Tracepoints (log-and-continue probes, simulated - see Debugging/TracepointService.cs). Set/remove
+/// drive the debugger (they place breakpoints + auto-continue), so both are gated; reading the
+/// timeline is also here for co-location.
+/// </summary>
+internal sealed class VsSetTracepointTool : DriveToolBase
+{
+    public VsSetTracepointTool(DebuggerDriver d) : base(d) { }
+    public override string Name => "vs_set_tracepoint";
+    public override string Description =>
+        "Place a LOG-AND-CONTINUE probe (tracepoint) at file:line WITHOUT editing the code: each time "
+        + "execution passes, the given expressions are evaluated and recorded, then the app immediately "
+        + "continues (it barely pauses). Returns a tracepointId - poll vs_get_tracepoint for the value "
+        + "timeline, vs_remove_tracepoint to disarm. Perfect for 'what values flow through here' on a "
+        + "hot path where a real breakpoint would be unusable. Driving enabled.";
+    public override JToken Schema => new JObject
+    {
+        ["type"] = "object",
+        ["properties"] = new JObject
+        {
+            ["file"] = Prop("string", "Absolute source file path."),
+            ["line"] = Prop("integer", "1-based line to probe."),
+            ["expressions"] = new JObject
+            {
+                ["type"] = "array", ["items"] = new JObject { ["type"] = "string" },
+                ["description"] = "Expressions to evaluate on each hit (e.g. 'order.Id', 'items.Count').",
+            },
+            ["maxHits"] = Prop("integer", "Stop recording (and stop pausing the app) after this many hits (default 20, max 1000)."),
+        },
+        ["required"] = new JArray("file", "line", "expressions"),
+    };
+    protected override async Task<JObject> RunAsync(JToken a, CancellationToken ct)
+    {
+        string? file = (string?)a["file"];
+        int line = (int?)a["line"] ?? 0;
+        var exprs = (a["expressions"] as JArray)?.Select(t => (string?)t).Where(s => !string.IsNullOrWhiteSpace(s)).Cast<string>().ToArray() ?? System.Array.Empty<string>();
+        if (string.IsNullOrWhiteSpace(file) || line <= 0 || exprs.Length == 0)
+            return new JObject { ["error"] = "need file, line, and at least one expression" };
+        await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync(ct);
+        return TracepointService.Set(file!, line, exprs, (int?)a["maxHits"] ?? 20);
+    }
+}
+
+internal sealed class VsGetTracepointTool : DriveToolBase
+{
+    public VsGetTracepointTool(DebuggerDriver d) : base(d) { }
+    public override string Name => "vs_get_tracepoint";
+    public override string Description =>
+        "Read a tracepoint's recorded value timeline: [{seq, time, values{expr: value}}], hitCount, and "
+        + "whether it exhausted maxHits. Pass the tracepointId from vs_set_tracepoint.";
+    public override JToken Schema => new JObject
+    {
+        ["type"] = "object",
+        ["properties"] = new JObject { ["tracepointId"] = Prop("string", "From vs_set_tracepoint.") },
+        ["required"] = new JArray("tracepointId"),
+    };
+    protected override Task<JObject> RunAsync(JToken a, CancellationToken ct)
+        => Task.FromResult(TracepointService.Get((string?)a["tracepointId"] ?? ""));
+}
+
+internal sealed class VsRemoveTracepointTool : DriveToolBase
+{
+    public VsRemoveTracepointTool(DebuggerDriver d) : base(d) { }
+    public override string Name => "vs_remove_tracepoint";
+    public override string Description =>
+        "Disarm a tracepoint (deletes its underlying breakpoint) and return the final recorded timeline.";
+    public override JToken Schema => new JObject
+    {
+        ["type"] = "object",
+        ["properties"] = new JObject { ["tracepointId"] = Prop("string", "From vs_set_tracepoint.") },
+        ["required"] = new JArray("tracepointId"),
+    };
+    protected override async Task<JObject> RunAsync(JToken a, CancellationToken ct)
+    {
+        await Microsoft.VisualStudio.Shell.ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync(ct);
+        return TracepointService.Remove((string?)a["tracepointId"] ?? "");
+    }
 }

@@ -1,0 +1,33 @@
+# CI build: every push/PR (and manual runs) produces a downloadable ClaudeCodeVS.vsix artifact,
+# so users can grab the latest build without waiting for a tagged release.
+# (Tagged releases - the user-facing download - stay in release.yml.)
+name: Build
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build Release VSIX
+        shell: pwsh
+        # /restore (not /t:Restore,Build): restore must finish BEFORE project evaluation, or the
+        # VSSDK.BuildTools nuget targets (obj/*.nuget.g.targets) aren't imported and the build
+        # compiles the DLL but silently skips creating the .vsix container.
+        run: msbuild src/ClaudeCodeVS/ClaudeCodeVS.csproj /restore /t:Build /p:Configuration=Release /p:DeployExtension=false /v:minimal /nologo
+
+      - name: Upload VSIX artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ClaudeCodeVS-vsix
+          path: src/ClaudeCodeVS/bin/Release/ClaudeCodeVS.vsix
+          if-no-files-found: error

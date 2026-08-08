@@ -53,12 +53,19 @@ internal sealed class TestRunner
     });
 
     /// <summary>Run tests by fully-qualified name (or all). Awaits the engine's own completion task.</summary>
-    public async Task<JObject> RunAsync(string? fqn, bool collectCoverage, bool profile, CancellationToken ct, bool build = true, bool failedOnly = false)
+    public Task<JObject> RunAsync(string? fqn, bool collectCoverage, bool profile, CancellationToken ct, bool build = true, bool failedOnly = false)
+        => RunCoreAsync(fqn == null ? null : new[] { fqn }, collectCoverage, profile, ct, build, failedOnly);
+
+    /// <summary>Run a SET of tests in one engine pass (vs_run_affected): one Scope.ForSymbol per FQN.</summary>
+    public Task<JObject> RunManyAsync(IReadOnlyCollection<string> fqns, CancellationToken ct)
+        => RunCoreAsync(fqns, collectCoverage: false, profile: false, ct);
+
+    private async Task<JObject> RunCoreAsync(IReadOnlyCollection<string>? fqns, bool collectCoverage, bool profile, CancellationToken ct, bool build = true, bool failedOnly = false)
     {
         var (broker, type, err) = await AcquireAsync(ct);
         if (broker == null) return new JObject { ["ok"] = false, ["error"] = err };
         await EnsureLoadedAsync(ct);
-        var report = new JObject { ["target"] = failedOnly ? "(failed)" : fqn ?? "(all)" };
+        var report = new JObject { ["target"] = failedOnly ? "(failed)" : fqns == null ? "(all)" : string.Join(";", fqns) };
         if (build) report["build"] = await BuildSolutionAsync(ct); // self-sufficient: no manual Ctrl+Shift+B needed
 
         // Wire Test Explorer's INTERNAL result callback (emitted, since it's an internal interface) so we
@@ -74,7 +81,7 @@ internal sealed class TestRunner
 
         try
         {
-            object? resp = await RunTestsAsyncReflect(broker, type!, fqn, collectCoverage, profile, callbackOptions, ct, failedOnly);
+            object? resp = await RunTestsAsyncReflect(broker, type!, fqns, collectCoverage, profile, callbackOptions, ct, failedOnly);
             report["mode"] = profile ? "Profile" : "Run";
             report["coverageRequested"] = collectCoverage;
             report["response"] = DescribeResponse(resp);
@@ -277,10 +284,10 @@ internal sealed class TestRunner
 
     // ---------------- run variants ----------------
 
-    private async Task<object?> RunTestsAsyncReflect(object broker, Type type, string? fqn, bool coverage, bool profile, object? callbackOptions, CancellationToken ct, bool failedOnly = false)
+    private async Task<object?> RunTestsAsyncReflect(object broker, Type type, IReadOnlyCollection<string>? fqns, bool coverage, bool profile, object? callbackOptions, CancellationToken ct, bool failedOnly = false)
     {
         // RunTestsAsync(TestHostMode mode, TestFilterOptions filter, TestRunOptions runOptions, TestCallbackOptions callbackOptions, ct)
-        object? filter = failedOnly ? BuildStateFilter("Failed") : BuildScopeFilter(fqn);
+        object? filter = failedOnly ? BuildStateFilter("Failed") : BuildScopeFilter(fqns);
         object runOpts = BuildRunOptions(coverage);
         var modeType = FindType("Microsoft.VisualStudio.TestWindow.Messages.TestHostMode", AsmInternal)!;
         object mode = Enum.ToObject(modeType, profile ? 2 : 0);
@@ -348,17 +355,19 @@ internal sealed class TestRunner
         return list;
     }
 
-    /// <summary>TestFilterOptions(ICollection&lt;Scope&gt;, int?) with one Scope.ForSymbol(fqn), or null = all.</summary>
-    private object? BuildScopeFilter(string? fqn)
+    /// <summary>TestFilterOptions(ICollection&lt;Scope&gt;, int?) with one Scope.ForSymbol per fqn, or null/empty = all.</summary>
+    private object? BuildScopeFilter(IReadOnlyCollection<string>? fqns)
     {
         var scopeType = FindType("Microsoft.VisualStudio.TestWindow.Extensibility.Scope", AsmInternal);
         var tfoType = FindType("Microsoft.VisualStudio.TestWindow.Extensibility.TestFilterOptions", AsmInternal);
         if (scopeType == null || tfoType == null) return null;
         var list = (IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(scopeType))!;
-        if (!string.IsNullOrEmpty(fqn))
+        var forSymbol = scopeType.GetMethod("ForSymbol", BindingFlags.Public | BindingFlags.Static);
+        foreach (var fqn in fqns ?? Array.Empty<string>())
         {
+            if (string.IsNullOrEmpty(fqn)) continue;
             // Scope.ForSymbol(fqn, projectName, type, method) — fqn-only; others null.
-            object? scope = scopeType.GetMethod("ForSymbol", BindingFlags.Public | BindingFlags.Static)?.Invoke(null, new object?[] { fqn, null, null, null });
+            object? scope = forSymbol?.Invoke(null, new object?[] { fqn, null, null, null });
             if (scope != null) list.Add(scope);
         }
         // RunTestsAsync rejects a null filter; a NON-null TestFilterOptions with an EMPTY scope list = run all.
