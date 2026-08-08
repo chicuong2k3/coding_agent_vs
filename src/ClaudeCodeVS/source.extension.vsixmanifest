@@ -11,13 +11,13 @@
     <Tags>claude, claude code, ai, anthropic, llm, agent, coding assistant, diff, mcp, c++, c#</Tags>
   </Metadata>
   <Installation>
-    <InstallationTarget Id="Microsoft.VisualStudio.Community" Version="[17.14,)">
+    <InstallationTarget Id="Microsoft.VisualStudio.Community" Version="[17.14,19.0)">
       <ProductArchitecture>amd64</ProductArchitecture>
     </InstallationTarget>
     <!-- Experimental (1.14.3): the extension is managed/AnyCPU and the reflected VS surfaces are the
          host's own, so ARM64 devenv runs it natively. x64-only pieces (the bundled ClrMD worker, managed
          data breakpoints) refuse with clear messages at runtime rather than failing confusingly. -->
-    <InstallationTarget Id="Microsoft.VisualStudio.Community" Version="[17.14,)">
+    <InstallationTarget Id="Microsoft.VisualStudio.Community" Version="[17.14,19.0)">
       <ProductArchitecture>arm64</ProductArchitecture>
     </InstallationTarget>
   </Installation>

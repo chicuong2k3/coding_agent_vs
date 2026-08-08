@@ -12,6 +12,12 @@ The ROADMAP sweep — five items land in one release. Per-feature test guide: [`
 - **Profiling (vs-debug).** `vs_perf_counters` (CPU %, GC, alloc rate, threadpool via dotnet-counters), `vs_trace_cpu` (top hot methods via dotnet-trace cpu-sampling), `vs_gc_dump` (top types by size via dotnet-gcdump; dump kept for VS/PerfView). Default PID = the current debuggee; clear install hint when a CLI is missing.
 - **Capture region crop.** `region:{x,y,width,height}` on `vs_capture_window` / `vs_capture_screen` — crop dense screens to the area of interest (full detail, fewer tokens). Out-of-bounds clamps.
 
+### Fixes (PR #1 review)
+
+- Profiling CLI processes are now disposed and killed on cancellation/timeout (no orphaned `dotnet-trace` holding a session).
+- `getDiagnostics` precise-span upgrade now MERGES with Error List entries (dedupe by line+message) instead of replacing — MSBuild/analyzer-only entries for the same file are kept.
+- Manifest installation target reverted to `[17.14,19.0)` (the 1.15.0 widening to `[17.14,)` violated the repo's Marketplace version-range rule).
+
 ## 1.16.0 - 2026-08-08
 
 Two ROADMAP items land: precise diagnostics and the fix-verify shortcut.

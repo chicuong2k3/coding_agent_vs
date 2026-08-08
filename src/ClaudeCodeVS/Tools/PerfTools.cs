@@ -72,19 +72,33 @@ internal static class PerfSupport
             });
         }
 
-        var sb = new StringBuilder();
-        proc.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        proc.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
-        proc.BeginOutputReadLine();
-        proc.BeginErrorReadLine();
-
-        var done = Task.Run(() => proc.WaitForExit(timeoutSeconds * 1000), ct);
-        if (!await done)
+        // Cancellation/timeout must KILL the child, not just abandon the wait — an orphaned
+        // dotnet-trace keeps profiling (and holding its session) long after the request died.
+        using (proc)
+        using (ct.Register(() => { try { proc.Kill(); } catch { } }))
         {
-            try { proc.Kill(); } catch { }
-            return (null, sb.ToString(), new JObject { ["error"] = $"'{exe}' did not finish within {timeoutSeconds}s" });
+            var sb = new StringBuilder();
+            proc.OutputDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
+            proc.ErrorDataReceived += (_, e) => { if (e.Data != null) lock (sb) sb.AppendLine(e.Data); };
+            proc.BeginOutputReadLine();
+            proc.BeginErrorReadLine();
+
+            bool exited;
+            try { exited = await Task.Run(() => proc.WaitForExit(timeoutSeconds * 1000), CancellationToken.None); }
+            catch (Exception e)
+            {
+                try { proc.Kill(); } catch { }
+                return (null, sb.ToString(), new JObject { ["error"] = $"'{exe}' wait failed: {e.Message}" });
+            }
+            if (ct.IsCancellationRequested)
+                return (null, sb.ToString(), new JObject { ["error"] = $"'{exe}' was cancelled" });
+            if (!exited)
+            {
+                try { proc.Kill(); } catch { }
+                return (null, sb.ToString(), new JObject { ["error"] = $"'{exe}' did not finish within {timeoutSeconds}s" });
+            }
+            return (proc.ExitCode, sb.ToString(), null);
         }
-        return (proc.ExitCode, sb.ToString(), null);
     }
 
     /// <summary>Bounded raw-text payload (the reports are tables; parsing them further loses information).</summary>

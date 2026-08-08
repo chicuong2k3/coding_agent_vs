@@ -46,7 +46,23 @@ internal sealed class GetDiagnosticsTool : IIdeTool
             var precise = await CodeModel.RoslynReader.GetPreciseDiagnosticsAsync(wanted, ct);
             if (precise is not null)
                 foreach (var kv in precise)
+                {
+                    // MERGE, don't replace: a file's Error List array can hold entries Roslyn's semantic
+                    // model doesn't produce (MSBuild build errors, Error-List-only analyzers). Keep those,
+                    // but drop the Error List twins of the Roslyn diagnostics (same line + same message -
+                    // Roslyn pushed them into the Error List in the first place) so nothing doubles up.
+                    if (byFile.TryGetValue(kv.Key, out var errorListDiags))
+                    {
+                        var seen = new HashSet<string>(kv.Value
+                            .Select(d => (int?)d["range"]?["start"]?["line"] + "|" + (string?)d["message"]));
+                        foreach (var d in errorListDiags)
+                        {
+                            var key = (int?)d["range"]?["start"]?["line"] + "|" + (string?)d["message"];
+                            if (!seen.Contains(key)) kv.Value.Add(d);
+                        }
+                    }
                     byFile[kv.Key] = kv.Value;
+                }
         }
         catch (Exception e)
         {
