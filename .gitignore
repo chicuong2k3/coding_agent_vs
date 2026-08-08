@@ -7,9 +7,13 @@ obj/
 .claude/
 .mcp.json
 
-# opencode runtime (shim + MCP config written by the extension on Launch; same class as .claude/)
+# opencode / omp runtime (stubs + MCP config written by the extension on Launch; same class as .claude/)
 .opencode/
 opencode.json
+.omp/
+
+# VS solution-upgrade logs
+UpgradeLog*.htm
 *.user
 *.suo
 *.userprefs
