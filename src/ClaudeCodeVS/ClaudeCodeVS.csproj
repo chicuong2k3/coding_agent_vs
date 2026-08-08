@@ -11,7 +11,6 @@
 -->
 <Project ToolsVersion="Current" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
-
   <PropertyGroup>
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
     <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
@@ -36,7 +35,6 @@
     <StartProgram Condition="'$(DevEnvDir)' != ''">$(DevEnvDir)devenv.exe</StartProgram>
     <StartArguments>/rootsuffix Exp</StartArguments>
   </PropertyGroup>
-
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
     <DebugSymbols>true</DebugSymbols>
     <DebugType>full</DebugType>
@@ -46,7 +44,6 @@
     <ErrorReport>prompt</ErrorReport>
     <WarningLevel>4</WarningLevel>
   </PropertyGroup>
-
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
     <DebugType>pdbonly</DebugType>
     <Optimize>true</Optimize>
@@ -55,11 +52,9 @@
     <ErrorReport>prompt</ErrorReport>
     <WarningLevel>4</WarningLevel>
   </PropertyGroup>
-
   <ItemGroup>
     <Compile Include="**\*.cs" Exclude="bin\**;obj\**" />
   </ItemGroup>
-
   <!-- WPF for the dockable tool window (net48 framework assemblies). -->
   <ItemGroup>
     <Reference Include="PresentationCore" />
@@ -69,13 +64,11 @@
     <!-- GDI capture for the vs_capture_* tools (framework assembly, ships nothing). -->
     <Reference Include="System.Drawing" />
   </ItemGroup>
-
   <ItemGroup>
     <None Include="source.extension.vsixmanifest">
       <SubType>Designer</SubType>
     </None>
   </ItemGroup>
-
   <!-- VSIX marketplace assets: icon (90x90) and preview (200x200). -->
   <ItemGroup>
     <Content Include="Resources\icon.png">
@@ -85,7 +78,6 @@
       <IncludeInVSIX>true</IncludeInVSIX>
     </Content>
   </ItemGroup>
-
   <!-- Hook scripts, embedded so the extension can write them into a workspace's .claude/ folder on
        launch: the single-gate PreToolUse hook and the Stop usage-stats hook. -->
   <ItemGroup>
@@ -96,14 +88,12 @@
     <!-- Phase 2 debug PULL channel: the stdio MCP shim, registered in .mcp.json (see McpInstaller). -->
     <EmbeddedResource Include="Hooks\vs-mcp-shim.ps1" />
   </ItemGroup>
-
   <ItemGroup>
     <!-- Compiled into the Menus.ctmenu resource referenced by [ProvideMenuResource]. -->
     <VSCTCompile Include="VSCommandTable.vsct">
       <ResourceName>Menus.ctmenu</ResourceName>
     </VSCTCompile>
   </ItemGroup>
-
   <ItemGroup>
     <PackageReference Include="Microsoft.VisualStudio.SDK" Version="17.14.40265" ExcludeAssets="runtime" />
     <PackageReference Include="Microsoft.VSSDK.BuildTools" Version="18.6.38345">
@@ -119,9 +109,11 @@
          Microsoft.CodeAnalysis.Workspaces compile refs (SymbolFinder, Solution, DocumentationCommentId). -->
     <PackageReference Include="Microsoft.VisualStudio.LanguageServices" Version="4.14.0" ExcludeAssets="runtime" />
   </ItemGroup>
-
   <ItemGroup>
-    <ProjectReference Include="..\ClaudeCodeVS.Protocol\ClaudeCodeVS.Protocol.csproj" />
+    <ProjectReference Include="..\ClaudeCodeVS.Protocol\ClaudeCodeVS.Protocol.csproj">
+      <Project>{7443AA6F-90B7-1398-B513-019CC2A7B4BD}</Project>
+      <Name>ClaudeCodeVS.Protocol</Name>
+    </ProjectReference>
     <!-- The Concord data-breakpoint component. OUTPUT-ONLY (ReferenceOutputAssembly=false): VS's
          debug engine loads it via its .vsdconfig (declared as a DebuggerEngineExtension asset in the
          manifest); the extension never references its code. The output groups carry the component
@@ -132,10 +124,8 @@
       <ReferenceOutputAssembly>false</ReferenceOutputAssembly>
     </ProjectReference>
   </ItemGroup>
-
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
   <Import Project="$(VSToolsPath)\VSSDK\Microsoft.VsSDK.targets" Condition="'$(VSToolsPath)' != '' And Exists('$(VSToolsPath)\VSSDK\Microsoft.VsSDK.targets')" />
-
   <!--
     Build the out-of-process ClrMD worker and ship its WHOLE output folder inside the .vsix under
     ClrMdWorker\. The extension launches ClrMdWorker.exe as a child process (so ClrMD never loads in

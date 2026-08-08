@@ -1,4 +1,13 @@
 <Solution>
+  <Folder Name="/demo/">
+    <Project Path="demo/AsyncTrace/AsyncTrace.csproj" />
+    <Project Path="demo/CheckoutBuggy/CheckoutBuggy.csproj" />
+    <Project Path="demo/LockJam/LockJam.csproj" />
+    <Project Path="demo/RefMaze/RefMaze.csproj" />
+    <Project Path="demo/SignalScan/SignalScan.csproj" />
+    <Project Path="demo/TestLab/TestLab.csproj" />
+    <Project Path="demo/WebQuote/WebQuote.csproj" />
+  </Folder>
   <Folder Name="/src/">
     <Project Path="src/ClaudeCodeVS.Protocol/ClaudeCodeVS.Protocol.csproj" />
     <Project Path="src/ClaudeCodeVS/ClaudeCodeVS.csproj" Id="209981d1-0325-4fad-b5f4-3d8662dbfef9" />
