@@ -39,6 +39,8 @@ The demand for this is on the Claude Code tracker. These requests ask for what t
 - **Live panel** - a dockable Claude Code panel: connection status, edit decisions, and token usage with estimated cost (latest call vs cumulative session).
 - **New in 1.16–1.17** - precise diagnostic spans (Roslyn), run-affected-tests (`vs_run_affected`), transitive callee trees, solution-wide semantic rename (`vs_rename`, preview-first + one-undo apply), log-and-continue tracepoints, CPU/memory profiling (`vs_perf_counters` / `vs_trace_cpu` / `vs_gc_dump`), and capture region-crop. Per-feature test walkthrough: [`docs/TESTING-NEW-FEATURES.md`](docs/TESTING-NEW-FEATURES.md).
 
+**Which of these actually save you time?** Not all of them, and not equally. [`docs/USE-CASES.md`](docs/USE-CASES.md) ranks every feature by real-world payoff against a plain `claude` terminal - with a concrete scenario for each, an honest frequency, and a section on when this extension is *not* worth it.
+
 ## A closer look
 
 A few of these are hard to picture from a bullet. Here they are running in the IDE.

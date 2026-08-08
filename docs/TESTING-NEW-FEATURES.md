@@ -14,6 +14,8 @@ One feature at a time — what to do, a sample prompt to give Claude, and the **
    dotnet tool install -g dotnet-gcdump
    ```
 
+**Recording results:** this file is the script, not the scratchpad — copy the template in [Appendix 1](#appendix-1--result-sheet-template) into a scratch file and fill it in as you go. If something fails on a prerequisite rather than on the feature itself, check [Appendix 2](#appendix-2--prerequisite-failures-not-feature-bugs) before filing a bug.
+
 ---
 
 ## A. Core bridge + diff (the main experience)
@@ -126,7 +128,16 @@ An app with a loop running under the debugger. *"Set a tracepoint at file:line l
 ## D. Data breakpoints (Concord; x64; drive toggle on)
 
 ### D1. vs_set_data_breakpoint
-While at a break, watch an INSTANCE field: *"Watch owner.field and report every change."* **Pass:** on continue, every mutation lands in the timeline; `stopOnChange:true` halts VS right after the writing statement; `vs_get_data_changes` returns `[{previous,current,type}]`; `vs_remove_data_breakpoint` disarms. Static/local/struct fields → a refusal with an explanation (by design).
+While at a break, watch an INSTANCE field: *"Watch owner.field and report every change."* **Pass:** on continue, every mutation lands in the timeline; `vs_get_data_changes` returns `[{previous,current,type}]`; `vs_remove_data_breakpoint` disarms. Static/local/struct fields → a refusal with an explanation (by design).
+
+### D2. stopOnChange — recurring, not one-shot
+Same watch with `stopOnChange:true` on a field written in a LOOP (several iterations). **Pass:** VS halts on the FIRST change one statement after the write; `vs_continue` → it halts AGAIN on the next write, and again — it re-arms every time like a normal breakpoint, it does not fire once and go quiet. `vs_get_data_changes` shows `broke:true` and a `breakCount` that matches the number of halts. Add a `condition` (e.g. `current > 100`) → only the matching writes halt, but EVERY write still appears in the timeline.
+
+### D3. Multi-watch fan-out on the same address
+With one watch already armed on `owner.field`, arm a SECOND one on the **same** field (a different `requestId`, e.g. one plain + one with a `condition`). **Pass:** BOTH requests keep receiving changes — the engine binds a single data breakpoint per address and fans out to every watcher, so the second `vs_set_data_breakpoint` must not shadow/silence the first. Check by calling `vs_get_data_changes` on each `requestId`: both timelines advance. Removing one → the other keeps firing; removing the last one disarms the engine binding.
+
+### D4. Multi-watch on different fields
+Watch two DIFFERENT instance fields at once. **Pass:** each `requestId` shows only its own field's mutations, no cross-talk.
 
 ---
 
@@ -233,6 +244,7 @@ Nothing new to click — **Pass** = everything in A→H behaves exactly as befor
 
 ## Known notes (not bugs)
 
+- **Four IDE-protocol tools have no checklist item because the CLI never calls them.** `getOpenEditors`, `getWorkspaceFolders`, `checkDocumentDirty` and `saveDocument` are implemented and correct, but the current CLI exposes only `getDiagnostics` + `executeCode` to the model and drives the rest internally — so there is no way to trigger them by asking Claude. They stay dormant until the CLI surfaces them; to exercise them meanwhile, drive them from the `spike/` harness (`dotnet run --project spike`), which speaks the raw protocol. "Claude can't list my open editors" is expected, not a regression.
 - The CLI's terminal prompt still asks alongside the diff (a redundant second gate) — an architectural limitation recorded in ROADMAP Phase 4.
 - `vs_rename` is C#/VB only and the symbol must have source in the solution.
 - A tracepoint hit while a `vs_continue` is awaiting the next break may resolve that wait — a known limit of the simulated log-and-continue.
@@ -240,3 +252,89 @@ Nothing new to click — **Pass** = everything in A→H behaves exactly as befor
 - An `at_mentioned` reference sent mid-turn or with the agents view focused may be silently dropped by the CLI — click the chip to re-mention.
 - F3 (profile:true) is experimental — report a failure, it blocks nothing else.
 - Everything 1.16→1.18 is build-verified only; this checklist IS the live-verification pass.
+
+---
+
+## Appendix 1 — result sheet template
+
+Copy into a scratch file (NOT into this doc) and fill in as you go. `✅` pass · `❌` fail · `⚠️` pass with a caveat · `⏭️` skipped (say why).
+
+```
+Tester:        Date:        VSIX version:        VS build:        claude --version:
+
+A. Core bridge + diff
+[ ] A1  launch + auto-connect          [ ] A8   selection context
+[ ] A2  external console               [ ] A9   getDiagnostics precise spans
+[ ] A3  diff accept                    [ ] A10  panel
+[ ] A4  diff reject                    [ ] A11  usage breakdown line
+[ ] A5  reject with feedback           [ ] A12  notifications
+[ ] A6  auto-accept                    [ ] A13  attachments tray
+[ ] A7  scratch-file gate skip         [ ] A14  reconnect hardening
+
+B. Debugger READ
+[ ] B1 push context   [ ] B2 debug_state   [ ] B3 evaluate/expand/locals
+[ ] B4 threads        [ ] B5 exception     [ ] B6 breakpoints/processes
+[ ] B7 ClrMD: wait_chains __ async_stacks __ heap_stats __ threadpool __ gc_roots __ heap_diff __
+
+C. Debugger DRIVE
+[ ] C1 gate   [ ] C2 step family   [ ] C3 break_all   [ ] C4 set/remove bp
+[ ] C5 break_on_thrown   [ ] C6 freeze/set_next   [ ] C7 start/stop/attach/detach   [ ] C8 tracepoints
+
+D. Data breakpoints
+[ ] D1 set/get/remove   [ ] D2 stopOnChange recurring   [ ] D3 fan-out same address   [ ] D4 different fields
+
+E. Semantic
+[ ] E1 search   [ ] E2 find_refs   [ ] E3 go_to_def   [ ] E4 find_impls   [ ] E5 call_hierarchy
+[ ] E6 type_hierarchy   [ ] E7 get_selection   [ ] E8 decompile   [ ] E9 rename (+ single Ctrl+Z)
+
+F. Tests
+[ ] F1 list   [ ] F2 run (+coverage)   [ ] F3 profile (experimental)   [ ] F4 run_affected
+[ ] F5 rerun_failed   [ ] F6 debug_test   [ ] F7 hunt (12/12)   [ ] F8 catch_flaky
+
+G. Capture           H. Profiling                    I. Infrastructure
+[ ] G1 gate          [ ] H1 perf_counters            [ ] I1 multi-agent profile
+[ ] G2 window        [ ] H2 trace_cpu                [ ] I2 CI/CD
+[ ] G3 screen        [ ] H3 gc_dump
+[ ] G4 region crop   [ ] H4 missing-CLI hint
+
+Failures (one line each): id — what happened — exact error text — repro steps
+```
+
+---
+
+## Appendix 2 — prerequisite failures (not feature bugs)
+
+When an item fails, check here first: these symptoms mean the environment isn't set up, not that the feature is broken. File a bug only after ruling these out.
+
+### B7 — the ClrMD suite (`vs_wait_chains`, `vs_async_stacks`, `vs_heap_stats`, `vs_threadpool`, `vs_gc_roots`, `vs_heap_diff`)
+
+These six shell out to `ClrMdWorker.exe`, bundled in the .vsix under `ClrMdWorker\` (ClrMD cannot load in-proc in devenv). Each failure mode returns a distinct `error` string:
+
+| `error` contains | Cause | Fix |
+|---|---|---|
+| `this tool is x64-only for now` | You're on ARM64 Windows. The worker can't snapshot an ARM64 process. | Not fixable here — every non-ClrMD debugger tool still works. Mark B7 `⏭️ skipped (ARM64)`. |
+| `ClrMD worker not found at <path>` | The `ClrMdWorker\` folder didn't ship in the .vsix, or the extension is running from a stale install dir. | Confirm `ClrMdWorker.exe` exists at the printed path. If missing, the packaging step dropped it — that IS a bug, report it with the path. |
+| `ClrMD worker timed out (Ns)` | The snapshot hung — usually a very large heap or the target being mid-GC. | Retry once. Persistent timeouts on a small demo app = a real bug. |
+| `ClrMD worker produced no output (exit N)` | The worker crashed on launch — nearly always a missing `.NET Framework 4.8` runtime or a corrupted `ClrMdWorker.exe.config`. | Run it by hand: `<installdir>\ClrMdWorker\ClrMdWorker.exe heapstats <pid>`. The real exception prints to the console. |
+| `unparseable worker output` | The worker wrote something before its JSON (a first-chance trace, a loader warning). | Report with the `raw` field — that field exists for exactly this. |
+
+Two more preconditions the tools can't detect for you:
+- **Nothing is being debugged.** All six need a live .NET process under the VS debugger. F5 the fixture first (`demo/LockJam` for wait chains, `demo/AsyncTrace` for async stacks) — no debuggee means no PID to snapshot.
+- **The debuggee is .NET Framework-only or native.** ClrMD reads managed heaps; a pure-native target returns empty structures, not an error.
+
+To iterate without VS in the loop, drive the worker directly against any PID — that's what it's for:
+```powershell
+& "<installdir>\ClrMdWorker\ClrMdWorker.exe" waitchains <pid>
+```
+
+### D — data breakpoints
+Needs **x64** (Concord data breakpoints don't arm on ARM64), the **drive toggle ON**, and an **instance field of a heap object** already in scope at the current break. A refusal naming statics/locals/struct fields is by design (D1), not a failure.
+
+### E — semantic tools
+`{"available":false}` means no C#/VB project is loaded — open the actual `.sln` (`demo/RefMaze`), not a folder. Roslyn also needs the solution to have finished loading; retry once if you asked immediately after opening.
+
+### F — test tools
+The engine is VS's own Test Explorer, reached through internal types by reflection. `vs_list_tests` returning `[]` on a solution that clearly has tests means the Roslyn attribute scan found no `[Fact]/[Test]/[TestMethod]` — check you opened `demo/TestLab`'s solution. A run failing to build is a build error, not a tool bug; the tools self-build via `SolutionBuild.Build(true)`.
+
+### H — profiling
+`vs_perf_counters` / `vs_trace_cpu` / `vs_gc_dump` need `dotnet-counters` / `dotnet-trace` / `dotnet-gcdump` on `PATH` (Setup step 5). A missing one returns the install hint — that's item H4 passing, not a failure.
