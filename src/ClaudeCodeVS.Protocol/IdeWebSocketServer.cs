@@ -16,7 +16,10 @@ namespace ClaudeCodeVs.Protocol;
 /// </summary>
 public sealed class IdeWebSocketServer
 {
-    private readonly string _authHeader; // per-agent header name (docs/MULTI-AGENT.md); Claude's by default
+    // Per-agent header names (docs/MULTI-AGENT.md). The bridge serves every configured agent at once, so
+    // a request authenticates if it presents the correct token under ANY registered header name. The
+    // token comparison is unchanged - only where we look for it widens.
+    private readonly IReadOnlyList<string> _authHeaders;
 
     private readonly int _port;
     private readonly string _authToken;
@@ -91,12 +94,15 @@ public sealed class IdeWebSocketServer
     /// </summary>
     public McpServer? SemanticMcp { get; set; }
 
-    public IdeWebSocketServer(int port, string authToken, McpServer mcp, AgentProfile? agent = null)
+    public IdeWebSocketServer(int port, string authToken, McpServer mcp, IReadOnlyList<AgentProfile>? agents = null)
     {
         _port = port;
         _authToken = authToken;
         _mcp = mcp;
-        _authHeader = (agent ?? AgentProfile.ClaudeCode).AuthHeader;
+        _authHeaders = (agents is { Count: > 0 } ? agents : new[] { AgentProfile.ClaudeCode })
+            .Select(a => a.AuthHeader)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
         _listener.Prefixes.Add($"http://127.0.0.1:{_port}/");
     }
 
@@ -134,7 +140,15 @@ public sealed class IdeWebSocketServer
         var remote = ctx.Request.RemoteEndPoint?.ToString() ?? "?";
 
         // 1) Auth at the HTTP upgrade - reject before any socket is created. Never log the token.
-        var presented = ctx.Request.Headers[_authHeader];
+        //    Any registered agent's header name is accepted, but the token must still match exactly.
+        string? presented = null;
+        foreach (var header in _authHeaders)
+        {
+            var value = ctx.Request.Headers[header];
+            if (value is null) continue;
+            presented = value;
+            if (string.Equals(value, _authToken, StringComparison.Ordinal)) break;
+        }
         if (!string.Equals(presented, _authToken, StringComparison.Ordinal))
         {
             Log.Warn($"401 rejected upgrade from {remote} ({(presented is null ? "no" : "bad")} auth token)");

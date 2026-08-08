@@ -2,6 +2,16 @@
 # Reconstructs the proposed file content, posts it to the VS bridge's /permission endpoint, and lets
 # the native VS diff (Accept/Reject) be the SOLE gate. Fail-open: any error -> allow (never block the CLI).
 # Output contract: exit 0 + one JSON line on stdout with the PreToolUse permission decision.
+#
+# -IdeDir / -IdeName / -AuthHeader parameterize bridge discovery per agent (docs/MULTI-AGENT.md).
+# Defaults are Claude Code's; PermissionHookInstaller only passes them when an agent differs, so an
+# existing settings.json entry never churns.
+
+param(
+    [string]$IdeDir = (Join-Path $env:USERPROFILE '.claude\ide'),
+    [string]$IdeName = 'Visual Studio',
+    [string]$AuthHeader = 'x-claude-code-ide-authorization'
+)
 
 $ErrorActionPreference = 'Stop'
 
@@ -54,12 +64,11 @@ try {
             $c.Close(); return $live
         } catch { return $false }
     }
-    $ideDir = Join-Path $env:USERPROFILE '.claude\ide'
     $cands = @()
-    foreach ($f in Get-ChildItem $ideDir -Filter *.lock -ErrorAction SilentlyContinue) {
+    foreach ($f in Get-ChildItem $IdeDir -Filter *.lock -ErrorAction SilentlyContinue) {
         try {
             $j = Get-Content -Raw $f.FullName | ConvertFrom-Json
-            if ($j.ideName -ne 'Visual Studio') { continue }
+            if ($j.ideName -ne $IdeName) { continue }
             $ws = if ($j.workspaceFolders) { [string]$j.workspaceFolders[0] } else { '' }
             $match = [bool]($ws -and $p.cwd -and ($p.cwd -like ($ws + '*')))
             $cands += [pscustomobject]@{ Port = [int]$f.BaseName; Token = $j.authToken; Score = (([int]$match) * 1000000 + $ws.Length) }
@@ -69,7 +78,7 @@ try {
     foreach ($cand in ($cands | Sort-Object Score -Descending)) {
         if (Test-Port $cand.Port) { $port = $cand.Port; $token = $cand.Token; break }
     }
-    if (-not $port) { Emit 'allow' 'no Visual Studio bridge lockfile found' }
+    if (-not $port) { Emit 'allow' "no $IdeName bridge lockfile found" }
 
     $body = @{ filePath = $file; newContents = $new; transcript_path = $p.transcript_path } | ConvertTo-Json -Compress -Depth 8
     # Send the body as explicit UTF-8 bytes; Invoke-RestMethod's default string encoding mangles
@@ -77,14 +86,14 @@ try {
     $bytes = [System.Text.Encoding]::UTF8.GetBytes($body)
     $resp = Invoke-RestMethod -Uri "http://127.0.0.1:$port/permission" -Method Post `
         -ContentType 'application/json; charset=utf-8' `
-        -Headers @{ 'x-claude-code-ide-authorization' = $token } `
+        -Headers @{ $AuthHeader = $token } `
         -Body $bytes -TimeoutSec 86400
 
     if ($resp.allow) {
-        Emit 'allow' 'Accepted in Visual Studio diff'
+        Emit 'allow' "Accepted in $IdeName diff"
     }
     else {
-        $why = if ($resp.reason) { [string]$resp.reason } else { 'Rejected in Visual Studio diff' }
+        $why = if ($resp.reason) { [string]$resp.reason } else { "Rejected in $IdeName diff" }
         Emit 'deny' $why
     }
 }

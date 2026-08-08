@@ -29,9 +29,9 @@ internal static class McpInstaller
         ("vs-semantic", new[] { "-Route", "/mcp-semantic" }),
     };
 
-    public static void EnsureInstalled(string workspaceRoot, AgentProfile? agent = null)
+    public static void EnsureInstalled(string workspaceRoot, AgentProfile? profile = null)
     {
-        agent ??= AgentProfile.ClaudeCode;
+        var agent = profile ?? AgentProfile.ClaudeCode;
         if (!agent.SupportsMcpRegistration)
         {
             Log.Info($"mcp: {agent.DisplayName} has no project MCP registration; skipping install");
@@ -45,7 +45,7 @@ internal static class McpInstaller
             // 1) (Over)write the shim from the embedded copy, so updates ship with the extension.
             File.WriteAllText(Path.Combine(claudeDir, ShimScript), ReadEmbeddedScript(ShimScript));
 
-            // 2) Upsert the server entry into <workspace>/.mcp.json, preserving any other servers. The
+            // 2) Upsert the server entry into the agent's MCP config, preserving any other servers. The
             //    relative -File path resolves against the CLI's cwd (the workspace root), matching where
             //    the shim was written. We always (re)write OUR entry so command/args updates ship, but
             //    leave the rest of the file untouched.
@@ -65,27 +65,22 @@ internal static class McpInstaller
                 root = new JObject();
             }
 
-            // Only assign when creating: re-assigning an already-parented JToken makes Json.NET CLONE it
-            // into the parent, detaching this local reference - upserts would then never reach the file
-            // (same bug as the hook installer; matters for users upgrading with an existing .mcp.json).
-            if (root["mcpServers"] is not JObject servers)
+            // Where the server map lives differs per agent: Claude's .mcp.json nests under "mcpServers",
+            // opencode.json under "mcp". Only assign when creating: re-assigning an already-parented
+            // JToken makes Json.NET CLONE it into the parent, detaching this local reference - upserts
+            // would then never reach the file (same bug as the hook installer; matters for users
+            // upgrading with an existing config).
+            string mapKey = agent.McpFormat == McpConfigFormat.OpenCodeMcp ? "mcp" : "mcpServers";
+            if (root[mapKey] is not JObject servers)
             {
                 servers = new JObject();
-                root["mcpServers"] = servers;
+                root[mapKey] = servers;
             }
 
             bool changed = false;
             foreach (var (name, extraArgs) in Servers)
             {
-                var argv = new JArray("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", $"{agent.ConfigDirName}/{ShimScript}");
-                foreach (var a in extraArgs) argv.Add(a);
-                var desired = new JObject
-                {
-                    ["type"] = "stdio",
-                    ["command"] = "powershell",
-                    ["args"] = argv,
-                };
-
+                var desired = BuildEntry(agent, extraArgs);
                 if (JToken.DeepEquals(servers[name], desired)) continue;
                 servers[name] = desired;
                 changed = true;
@@ -104,6 +99,54 @@ internal static class McpInstaller
         {
             Log.Warn($"mcp install failed: {e.Message}");
         }
+    }
+
+    /// <summary>
+    /// The config entry for one pull server, in the shape <paramref name="agent"/> expects.
+    ///
+    /// Discovery arguments (-IdeDir / -IdeName / -AuthHeader) are appended ONLY when they differ from
+    /// the shim's built-in Claude defaults, so Claude Code's entry stays byte-identical to the one
+    /// shipped before multi-agent support - a changed entry re-triggers the CLI's "trust this project
+    /// server?" prompt for every existing user.
+    /// </summary>
+    private static JObject BuildEntry(AgentProfile agent, string[] extraArgs)
+    {
+        var script = $"{agent.ConfigDirName}/{ShimScript}";
+        var tail = new List<string>(extraArgs);
+        if (agent.IdeDir is { Length: > 0 } dir && !string.Equals(dir, AgentProfile.ClaudeCode.IdeDir, StringComparison.OrdinalIgnoreCase))
+        {
+            tail.Add("-IdeDir"); tail.Add(dir);
+        }
+        if (!string.Equals(agent.IdeName, AgentProfile.ClaudeCode.IdeName, StringComparison.Ordinal))
+        {
+            tail.Add("-IdeName"); tail.Add(agent.IdeName);
+        }
+        if (!string.Equals(agent.AuthHeader, AgentProfile.ClaudeCode.AuthHeader, StringComparison.OrdinalIgnoreCase))
+        {
+            tail.Add("-AuthHeader"); tail.Add(agent.AuthHeader);
+        }
+
+        if (agent.McpFormat == McpConfigFormat.OpenCodeMcp)
+        {
+            // opencode.json: `command` is the whole argv array, and entries carry an explicit enabled flag.
+            var argv = new JArray("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script);
+            foreach (var a in tail) argv.Add(a);
+            return new JObject
+            {
+                ["type"] = "local",
+                ["command"] = argv,
+                ["enabled"] = true,
+            };
+        }
+
+        var args = new JArray("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script);
+        foreach (var a in tail) args.Add(a);
+        return new JObject
+        {
+            ["type"] = "stdio",
+            ["command"] = "powershell",
+            ["args"] = args,
+        };
     }
 
     private static string ReadEmbeddedScript(string scriptFileName)

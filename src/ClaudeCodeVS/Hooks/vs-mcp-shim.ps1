@@ -20,8 +20,18 @@
 #   /mcp           -> vs-debug    (runtime/debugger tools)
 #   /mcp-semantic  -> vs-semantic (Roslyn code-navigation tools)
 # The .mcp.json entry for each server passes the matching -Route; default keeps the original vs-debug behavior.
+#
+# -IdeDir / -IdeName / -AuthHeader parameterize bridge discovery per agent (docs/MULTI-AGENT.md). The
+# defaults are Claude Code's, and McpInstaller only passes them when an agent differs - so a Claude
+# Code config entry stays byte-identical to the pre-multi-agent one (a changed entry would re-trigger
+# the CLI's "trust this project server?" prompt).
 
-param([string]$Route = '/mcp')
+param(
+    [string]$Route = '/mcp',
+    [string]$IdeDir = (Join-Path $env:USERPROFILE '.claude\ide'),
+    [string]$IdeName = 'Visual Studio',
+    [string]$AuthHeader = 'x-claude-code-ide-authorization'
+)
 
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'   # suppress Invoke-WebRequest's progress bar (it can hit stderr)
@@ -43,12 +53,11 @@ function Test-Port([int]$pt) {
 # and $script:Token; returns $true on success.
 function Resolve-Bridge {
     $cwd = (Get-Location).Path
-    $ideDir = Join-Path $env:USERPROFILE '.claude\ide'
     $cands = @()
-    foreach ($f in Get-ChildItem $ideDir -Filter *.lock -ErrorAction SilentlyContinue) {
+    foreach ($f in Get-ChildItem $IdeDir -Filter *.lock -ErrorAction SilentlyContinue) {
         try {
             $j = Get-Content -Raw $f.FullName | ConvertFrom-Json
-            if ($j.ideName -ne 'Visual Studio') { continue }
+            if ($j.ideName -ne $IdeName) { continue }
             $ws = if ($j.workspaceFolders) { [string]$j.workspaceFolders[0] } else { '' }
             $match = [bool]($ws -and $cwd -and ($cwd -like ($ws + '*')))
             $cands += [pscustomobject]@{ Port = [int]$f.BaseName; Token = $j.authToken; Score = (([int]$match) * 1000000 + $ws.Length) }
@@ -68,7 +77,7 @@ function Send-ToBridge([string]$json) {
     $bytes = [System.Text.Encoding]::UTF8.GetBytes($json)
     $resp = Invoke-WebRequest -Uri "http://127.0.0.1:$($script:Port)$Route" -Method Post `
         -ContentType 'application/json; charset=utf-8' `
-        -Headers @{ 'x-claude-code-ide-authorization' = $script:Token } `
+        -Headers @{ $AuthHeader = $script:Token } `
         -Body $bytes -TimeoutSec 60 -UseBasicParsing
     if ($resp.RawContentStream) {
         return [System.Text.Encoding]::UTF8.GetString($resp.RawContentStream.ToArray())

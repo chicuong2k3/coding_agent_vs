@@ -16,32 +16,47 @@ public sealed class Lockfile
 {
     public int Port { get; }
     public string AuthToken { get; }
-    public string Path { get; }
+
+    /// <summary>
+    /// Every path this lockfile was written to - one per DISTINCT agent IdeDir. Agents that share a
+    /// discovery directory (Claude Code and opencode both read <c>~/.claude/ide</c>) share one file, so
+    /// this is usually a single entry.
+    /// </summary>
+    public IReadOnlyList<string> Paths { get; }
+
+    /// <summary>The primary lockfile path (the first agent's). Kept for logging and single-agent callers.</summary>
+    public string Path => Paths[0];
 
     private readonly LockfileDoc _doc;
 
-    private Lockfile(int port, string authToken, string path, LockfileDoc doc)
+    private Lockfile(int port, string authToken, IReadOnlyList<string> paths, LockfileDoc doc)
     {
         Port = port;
         AuthToken = authToken;
-        Path = path;
+        Paths = paths;
         _doc = doc;
     }
 
     /// <summary>
-    /// Pick a free loopback port, then write the lockfile for it. We bind a throwaway
-    /// TcpListener to port 0 (OS assigns a free port), read the assignment, and release it.
-    /// There's a tiny TOCTOU window before the WS server grabs the port - acceptable in practice.
-    /// The lockfile directory comes from the agent profile (docs/MULTI-AGENT.md: per-agent IdeDir).
+    /// Pick a free loopback port, then write a lockfile for it into every agent's discovery directory.
+    /// We bind a throwaway TcpListener to port 0 (OS assigns a free port), read the assignment, and
+    /// release it. There's a tiny TOCTOU window before the WS server grabs the port - acceptable in
+    /// practice.
+    ///
+    /// ONE port, ONE auth token, N directories: the bridge serves every agent simultaneously
+    /// (docs/MULTI-AGENT.md), so whichever agent the user launches finds a live bridge without the
+    /// server being torn down and rebuilt. Agents with no lockfile discovery
+    /// (<see cref="AgentProfile.SupportsIdeSocket"/> false) contribute no directory.
     /// </summary>
-    public static Lockfile CreateForFreePort(IReadOnlyList<string> workspaceFolders, AgentProfile? agent = null)
+    public static Lockfile CreateForFreePort(IReadOnlyList<string> workspaceFolders, IReadOnlyList<AgentProfile>? agents = null)
     {
-        string ideDir = (agent ?? AgentProfile.ClaudeCode).IdeDir;
-        Directory.CreateDirectory(ideDir);
+        agents = Normalize(agents);
+        var ideDirs = DistinctIdeDirs(agents);
+        if (ideDirs.Count == 0)
+            throw new InvalidOperationException("no agent profile declares a lockfile directory");
 
         int port = PickFreePort();
         var token = Guid.NewGuid().ToString();
-        var path = System.IO.Path.Combine(ideDir, $"{port}.lock");
 
         var self = Process.GetCurrentProcess();
         var doc = new LockfileDoc
@@ -49,81 +64,128 @@ public sealed class Lockfile
             Pid = self.Id,
             PidStartTime = SafeStartTime(self),
             WorkspaceFolders = workspaceFolders.ToArray(),
-            IdeName = "Visual Studio",
+            IdeName = agents[0].IdeName,
             Transport = "ws",
             // CLI uses this to pick `tasklist.exe` (Windows) vs `ps` for PID-liveness checks.
             RunningInWindows = RuntimeInformation.IsOSPlatform(OSPlatform.Windows),
             AuthToken = token,
         };
 
-        File.WriteAllText(path, JsonConvert.SerializeObject(doc, Formatting.Indented));
-        Log.Info($"wrote lockfile {path} (pid={doc.Pid}, token=<redacted>)");
-        return new Lockfile(port, token, path, doc);
+        var json = JsonConvert.SerializeObject(doc, Formatting.Indented);
+        var paths = new List<string>();
+        foreach (var dir in ideDirs)
+        {
+            try
+            {
+                Directory.CreateDirectory(dir);
+                var path = System.IO.Path.Combine(dir, $"{port}.lock");
+                File.WriteAllText(path, json);
+                paths.Add(path);
+                Log.Info($"wrote lockfile {path} (pid={doc.Pid}, token=<redacted>)");
+            }
+            catch (Exception e)
+            {
+                // One unwritable agent directory must not sink the bridge; the others still discover it.
+                Log.Warn($"could not write lockfile in {dir}: {e.Message}");
+            }
+        }
+        if (paths.Count == 0)
+            throw new IOException($"could not write a lockfile in any of: {string.Join("; ", ideDirs)}");
+
+        return new Lockfile(port, token, paths, doc);
     }
 
     /// <summary>
-    /// Rewrite the lockfile with new workspace folders (same port + token). The bridge starts at
+    /// Rewrite every lockfile with new workspace folders (same port + token). The bridge starts at
     /// shell-init before any solution is open, so workspaceFolders is initially empty; call this when
     /// a solution/folder opens so the CLI's /ide matches it against the current working directory.
     /// </summary>
     public void UpdateWorkspaceFolders(IReadOnlyList<string> folders)
     {
         _doc.WorkspaceFolders = folders.ToArray();
-        try
+        var json = JsonConvert.SerializeObject(_doc, Formatting.Indented);
+        foreach (var path in Paths)
         {
-            File.WriteAllText(Path, JsonConvert.SerializeObject(_doc, Formatting.Indented));
-            Log.Info($"updated lockfile workspaceFolders: {string.Join("; ", _doc.WorkspaceFolders)}");
+            try
+            {
+                File.WriteAllText(path, json);
+            }
+            catch (Exception e)
+            {
+                Log.Warn($"could not update lockfile workspaceFolders in {path}: {e.Message}");
+            }
         }
-        catch (Exception e)
-        {
-            Log.Warn($"could not update lockfile workspaceFolders: {e.Message}");
-        }
+        Log.Info($"updated lockfile workspaceFolders: {string.Join("; ", _doc.WorkspaceFolders)}");
     }
 
     public void Delete()
     {
-        try
-        {
-            if (File.Exists(Path))
-            {
-                File.Delete(Path);
-                Log.Info($"deleted lockfile {Path}");
-            }
-        }
-        catch (Exception e)
-        {
-            Log.Warn($"could not delete lockfile {Path}: {e.Message}");
-        }
-    }
-
-    /// <summary>
-    /// On startup, remove lockfiles whose owning process is dead. A stale lockfile pointing at a
-    /// dead WS server blocks reconnection (issue #5043). We ONLY delete dead-PID files - never
-    /// another live IDE's (e.g. a running VS Code) lockfile.
-    /// </summary>
-    public static void ReapStale(AgentProfile? agent = null)
-    {
-        string ideDir = (agent ?? AgentProfile.ClaudeCode).IdeDir;
-        if (!Directory.Exists(ideDir)) return;
-
-        foreach (var file in Directory.EnumerateFiles(ideDir, "*.lock"))
+        foreach (var path in Paths)
         {
             try
             {
-                var doc = JsonConvert.DeserializeObject<LockfileDoc>(File.ReadAllText(file));
-                if (doc is null) continue;
-
-                if (!IsOwnerAlive(doc.Pid, doc.PidStartTime))
+                if (File.Exists(path))
                 {
-                    File.Delete(file);
-                    Log.Info($"reaped stale lockfile {System.IO.Path.GetFileName(file)} (dead/recycled pid {doc.Pid})");
+                    File.Delete(path);
+                    Log.Info($"deleted lockfile {path}");
                 }
             }
             catch (Exception e)
             {
-                Log.Warn($"skipping unreadable lockfile {System.IO.Path.GetFileName(file)}: {e.Message}");
+                Log.Warn($"could not delete lockfile {path}: {e.Message}");
             }
         }
+    }
+
+    /// <summary>
+    /// On startup, remove lockfiles whose owning process is dead, across every agent's discovery
+    /// directory. A stale lockfile pointing at a dead WS server blocks reconnection (issue #5043). We
+    /// ONLY delete dead-PID files - never another live IDE's (e.g. a running VS Code) lockfile.
+    /// </summary>
+    public static void ReapStale(IReadOnlyList<AgentProfile>? agents = null)
+    {
+        foreach (var ideDir in DistinctIdeDirs(Normalize(agents)))
+        {
+            if (!Directory.Exists(ideDir)) continue;
+
+            foreach (var file in Directory.EnumerateFiles(ideDir, "*.lock"))
+            {
+                try
+                {
+                    var doc = JsonConvert.DeserializeObject<LockfileDoc>(File.ReadAllText(file));
+                    if (doc is null) continue;
+
+                    if (!IsOwnerAlive(doc.Pid, doc.PidStartTime))
+                    {
+                        File.Delete(file);
+                        Log.Info($"reaped stale lockfile {System.IO.Path.GetFileName(file)} (dead/recycled pid {doc.Pid})");
+                    }
+                }
+                catch (Exception e)
+                {
+                    Log.Warn($"skipping unreadable lockfile {System.IO.Path.GetFileName(file)}: {e.Message}");
+                }
+            }
+        }
+    }
+
+    private static IReadOnlyList<AgentProfile> Normalize(IReadOnlyList<AgentProfile>? agents) =>
+        agents is { Count: > 0 } ? agents : new[] { AgentProfile.ClaudeCode };
+
+    /// <summary>
+    /// The discovery directories to write/reap, de-duplicated case-insensitively - Claude Code and
+    /// opencode both point at <c>~/.claude/ide</c>, and writing that file twice would be pointless.
+    /// </summary>
+    private static IReadOnlyList<string> DistinctIdeDirs(IReadOnlyList<AgentProfile> agents)
+    {
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var dirs = new List<string>();
+        foreach (var a in agents)
+        {
+            if (a.IdeDir is not { Length: > 0 } dir) continue;
+            if (seen.Add(dir)) dirs.Add(dir);
+        }
+        return dirs;
     }
 
     /// <summary>

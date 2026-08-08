@@ -35,14 +35,37 @@ internal static class PermissionHookInstaller
     /// takes over; install-on-connect (BridgeHost) is the other half, materializing the scripts for any
     /// session that reaches the bridge. Stdin flows through to the script, and its exit code/stdout are
     /// preserved, so hook semantics are unchanged when the script IS present.
+    ///
+    /// <paramref name="discoveryArgs"/> carries per-agent -IdeDir/-IdeName/-AuthHeader overrides and is
+    /// EMPTY for Claude Code, so its command string stays byte-identical to the pre-multi-agent one -
+    /// existing settings.json files aren't rewritten on upgrade.
     /// </summary>
-    private static string Command(string configDir, string script) =>
+    private static string Command(string configDir, string script, string discoveryArgs) =>
         "powershell -NoProfile -ExecutionPolicy Bypass -Command "
-        + $"\"if (Test-Path '{configDir}/{script}') {{ & '{configDir}/{script}' }} else {{ exit 0 }}\"";
+        + $"\"if (Test-Path '{configDir}/{script}') {{ & '{configDir}/{script}'{discoveryArgs} }} else {{ exit 0 }}\"";
 
-    public static void EnsureInstalled(string workspaceRoot, AgentProfile? agent = null)
+    /// <summary>
+    /// The -IdeDir/-IdeName/-AuthHeader tail for <paramref name="agent"/>, or "" when it matches the
+    /// scripts' Claude Code defaults. Values are single-quoted for the outer -Command string; a literal
+    /// quote is doubled, PowerShell's escape inside a single-quoted string.
+    /// </summary>
+    private static string DiscoveryArgs(AgentProfile agent)
     {
-        agent ??= AgentProfile.ClaudeCode;
+        var sb = new System.Text.StringBuilder();
+        void Add(string name, string value) => sb.Append($" {name} '{value.Replace("'", "''")}'");
+
+        if (agent.IdeDir is { Length: > 0 } dir && !string.Equals(dir, AgentProfile.ClaudeCode.IdeDir, StringComparison.OrdinalIgnoreCase))
+            Add("-IdeDir", dir);
+        if (!string.Equals(agent.IdeName, AgentProfile.ClaudeCode.IdeName, StringComparison.Ordinal))
+            Add("-IdeName", agent.IdeName);
+        if (!string.Equals(agent.AuthHeader, AgentProfile.ClaudeCode.AuthHeader, StringComparison.OrdinalIgnoreCase))
+            Add("-AuthHeader", agent.AuthHeader);
+        return sb.ToString();
+    }
+
+    public static void EnsureInstalled(string workspaceRoot, AgentProfile? profile = null)
+    {
+        var agent = profile ?? AgentProfile.ClaudeCode;
         if (!agent.SupportsHooks)
         {
             Log.Info($"hooks: {agent.DisplayName} has no hook system; skipping install");
@@ -87,10 +110,11 @@ internal static class PermissionHookInstaller
             }
 
             string cfgDir = agent.ConfigDirName;
-            bool addedPre = EnsureHook(hooks, "PreToolUse", "Edit|Write|MultiEdit", cfgDir, PermissionScript, PermissionTimeoutSeconds);
-            bool addedStop = EnsureHook(hooks, "Stop", matcher: null, cfgDir, UsageScript, UsageTimeoutSeconds);
-            bool addedDebug = EnsureHook(hooks, "UserPromptSubmit", matcher: null, cfgDir, DebugScript, DebugTimeoutSeconds);
-            bool addedNotify = EnsureHook(hooks, "Notification", matcher: null, cfgDir, NotifyScript, NotifyTimeoutSeconds);
+            string discovery = DiscoveryArgs(agent);
+            bool addedPre = EnsureHook(hooks, "PreToolUse", "Edit|Write|MultiEdit", cfgDir, PermissionScript, PermissionTimeoutSeconds, discovery);
+            bool addedStop = EnsureHook(hooks, "Stop", matcher: null, cfgDir, UsageScript, UsageTimeoutSeconds, discovery);
+            bool addedDebug = EnsureHook(hooks, "UserPromptSubmit", matcher: null, cfgDir, DebugScript, DebugTimeoutSeconds, discovery);
+            bool addedNotify = EnsureHook(hooks, "Notification", matcher: null, cfgDir, NotifyScript, NotifyTimeoutSeconds, discovery);
 
             if (!addedPre && !addedStop && !addedDebug && !addedNotify)
             {
@@ -112,7 +136,7 @@ internal static class PermissionHookInstaller
     /// existing entry whose command drifted from the current form (e.g. the pre-1.14.4 unguarded
     /// "-File .claude/x.ps1" shape). Returns true if it changed settings.
     /// </summary>
-    private static bool EnsureHook(JObject hooks, string eventName, string? matcher, string configDir, string script, int timeoutSeconds)
+    private static bool EnsureHook(JObject hooks, string eventName, string? matcher, string configDir, string script, int timeoutSeconds, string discoveryArgs)
     {
         // Same clone-on-reparent hazard as above: keep the existing array in place, only assign a new one.
         if (hooks[eventName] is not JArray arr)
@@ -124,7 +148,7 @@ internal static class PermissionHookInstaller
         var existing = FindOurHook(arr, script);
         if (existing != null)
         {
-            var want = Command(configDir, script);
+            var want = Command(configDir, script, discoveryArgs);
             if (string.Equals((string?)existing["command"], want, StringComparison.Ordinal)) return false;
             // Migrate IN PLACE: setting a value property on the EXISTING object is safe - it's
             // re-parenting a token into a new parent that clones (the 1.11.0 lesson), not this.

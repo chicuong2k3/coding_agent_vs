@@ -6,6 +6,13 @@
 # No-op when not in break mode (emits nothing -> injects nothing, so non-debugging turns stay clean).
 # Fail-open: any error exits 0 with no output. Output contract: exit 0 + a UserPromptSubmit JSON line
 # carrying hookSpecificOutput.additionalContext.
+#
+# -IdeDir / -IdeName / -AuthHeader parameterize bridge discovery per agent (docs/MULTI-AGENT.md).
+param(
+    [string]$IdeDir = (Join-Path $env:USERPROFILE '.claude\ide'),
+    [string]$IdeName = 'Visual Studio',
+    [string]$AuthHeader = 'x-claude-code-ide-authorization'
+)
 $ErrorActionPreference = 'Stop'
 try {
     # Read stdin as UTF-8 (default console input encoding garbles non-ASCII).
@@ -23,12 +30,11 @@ try {
             $c.Close(); return $live
         } catch { return $false }
     }
-    $ideDir = Join-Path $env:USERPROFILE '.claude\ide'
     $cands = @()
-    foreach ($f in Get-ChildItem $ideDir -Filter *.lock -ErrorAction SilentlyContinue) {
+    foreach ($f in Get-ChildItem $IdeDir -Filter *.lock -ErrorAction SilentlyContinue) {
         try {
             $j = Get-Content -Raw $f.FullName | ConvertFrom-Json
-            if ($j.ideName -ne 'Visual Studio') { continue }
+            if ($j.ideName -ne $IdeName) { continue }
             $ws = if ($j.workspaceFolders) { [string]$j.workspaceFolders[0] } else { '' }
             $match = [bool]($ws -and $p.cwd -and ($p.cwd -like ($ws + '*')))
             $cands += [pscustomobject]@{ Port = [int]$f.BaseName; Token = $j.authToken; Score = (([int]$match) * 1000000 + $ws.Length) }
@@ -38,7 +44,7 @@ try {
     foreach ($cand in ($cands | Sort-Object Score -Descending)) {
         if (Test-Port $cand.Port) { $port = $cand.Port; $token = $cand.Token; break }
     }
-    if (-not $port) { exit 0 } # no VS bridge -> inject nothing
+    if (-not $port) { exit 0 } # no IDE bridge -> inject nothing
 
     $body = @{ cwd = $p.cwd } | ConvertTo-Json -Compress
     $bytes = [System.Text.Encoding]::UTF8.GetBytes($body)
@@ -48,7 +54,7 @@ try {
     # nothing this turn (fail-open via the outer catch).
     $resp = Invoke-RestMethod -Uri "http://127.0.0.1:$port/debug-context" -Method Post `
         -ContentType 'application/json; charset=utf-8' `
-        -Headers @{ 'x-claude-code-ide-authorization' = $token } `
+        -Headers @{ $AuthHeader = $token } `
         -Body $bytes -TimeoutSec 4
 
     # Only inject while actually stopped at a breakpoint.
@@ -56,7 +62,7 @@ try {
 
     # Render a compact, readable context block from the snapshot.
     $sb = New-Object System.Text.StringBuilder
-    [void]$sb.AppendLine('The Visual Studio debugger is paused at a breakpoint. Current runtime state:')
+    [void]$sb.AppendLine("The $IdeName debugger is paused at a breakpoint. Current runtime state:")
     if ($resp.stoppedAt) {
         [void]$sb.AppendLine(("- Stopped at {0}:{1} in {2}()" -f $resp.stoppedAt.file, $resp.stoppedAt.line, $resp.stoppedAt.function))
     }

@@ -1,6 +1,13 @@
 # Stop hook (auto-installed by the Claude Code VS extension). Reports the conversation transcript path
 # to the VS bridge's /usage endpoint so the dockable panel can show token/cost stats. Observe-only:
 # always exits 0 so the CLI's turn-end is never blocked.
+#
+# -IdeDir / -IdeName / -AuthHeader parameterize bridge discovery per agent (docs/MULTI-AGENT.md).
+param(
+    [string]$IdeDir = (Join-Path $env:USERPROFILE '.claude\ide'),
+    [string]$IdeName = 'Visual Studio',
+    [string]$AuthHeader = 'x-claude-code-ide-authorization'
+)
 $ErrorActionPreference = 'Stop'
 try {
     # Read stdin as UTF-8 (default console input encoding garbles non-ASCII).
@@ -20,12 +27,11 @@ try {
             $c.Close(); return $live
         } catch { return $false }
     }
-    $ideDir = Join-Path $env:USERPROFILE '.claude\ide'
     $cands = @()
-    foreach ($f in Get-ChildItem $ideDir -Filter *.lock -ErrorAction SilentlyContinue) {
+    foreach ($f in Get-ChildItem $IdeDir -Filter *.lock -ErrorAction SilentlyContinue) {
         try {
             $j = Get-Content -Raw $f.FullName | ConvertFrom-Json
-            if ($j.ideName -ne 'Visual Studio') { continue }
+            if ($j.ideName -ne $IdeName) { continue }
             $ws = if ($j.workspaceFolders) { [string]$j.workspaceFolders[0] } else { '' }
             $match = [bool]($ws -and $p.cwd -and ($p.cwd -like ($ws + '*')))
             $cands += [pscustomobject]@{ Port = [int]$f.BaseName; Token = $j.authToken; Score = (([int]$match) * 1000000 + $ws.Length) }
@@ -41,7 +47,7 @@ try {
     $bytes = [System.Text.Encoding]::UTF8.GetBytes($body)
     Invoke-RestMethod -Uri "http://127.0.0.1:$port/usage" -Method Post `
         -ContentType 'application/json; charset=utf-8' `
-        -Headers @{ 'x-claude-code-ide-authorization' = $token } `
+        -Headers @{ $AuthHeader = $token } `
         -Body $bytes -TimeoutSec 5 | Out-Null
 } catch { }
 exit 0
