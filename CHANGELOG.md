@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.21.5 - 2026-08-09
+
+### Changes
+
+- **The bridge's first log line now shows the running extension version** ("Claude Code bridge starting… (extension 1.21.5)"), read from the deployed vsixmanifest. A pending VSIX only applies after VS fully restarts, and "which version is actually running" has burned real debugging time — now the panel feed answers it.
+- The v1.21.4 presence logic was verified end-to-end outside VS: a harness hosting the real `IdeWebSocketServer` + the verbatim pill logic, against real opencode with the real stub — kill the CLI and the pill greys in ~22s (WS drop + heartbeat sweep). If the pill still sticks on a machine, check the feed's version line first, and remember the pill is bridge-wide: it stays green while ANY agent (e.g. a still-open Claude Code) is connected.
+
 ## 1.21.4 - 2026-08-09
 
 ### Fixes

@@ -72,7 +72,10 @@ internal sealed class BridgeHost : IDisposable
         Ui.BridgeStatus.LaunchAction = () => LaunchClaudeAsync();
         Ui.BridgeStatus.LaunchExternalAction = () => LaunchClaudeAsync(forceExternal: true);
         Ui.BridgeStatus.ShowOutputAction = () => pane.Activate(); // panel's "Output" button (UI thread)
-        Log.Info("Claude Code bridge starting…");
+        // Version in the first log line: stale-install confusion (a pending VSIX only applies after
+        // VS fully restarts) has burned real debugging time - make what's actually running visible.
+        // The assembly version is never bumped, so read the installed manifest next to the DLL.
+        Log.Info($"Claude Code bridge starting… (extension {InstalledVersion()})");
 
         // 2) Lockfile lifecycle: reap stale dead-PID files, then claim a free port. (build-plan §3)
         //    Served for ALL agents - one free port, one token, a lockfile in every distinct discovery
@@ -383,6 +386,20 @@ internal sealed class BridgeHost : IDisposable
     }
 
     private bool HeartbeatFresh => DateTime.UtcNow - _lastBeatUtc < HeartbeatTtl;
+
+    /// <summary>The installed extension's version, from the vsixmanifest deployed next to our DLL.</summary>
+    private static string InstalledVersion()
+    {
+        try
+        {
+            var dir = System.IO.Path.GetDirectoryName(typeof(BridgeHost).Assembly.Location)!;
+            var manifest = System.IO.Path.Combine(dir, "extension.vsixmanifest");
+            var m = System.Text.RegularExpressions.Regex.Match(
+                System.IO.File.ReadAllText(manifest), @"Identity[^>]*\sVersion=""([^""]+)""");
+            return m.Success ? m.Groups[1].Value : "?";
+        }
+        catch { return "?"; }
+    }
 
     /// <summary>
     /// Install-on-connect (marketplace feedback): a session that reaches the bridge without going
