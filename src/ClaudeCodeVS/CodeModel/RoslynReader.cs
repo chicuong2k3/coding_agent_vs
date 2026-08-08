@@ -11,6 +11,7 @@ using Microsoft.CodeAnalysis;
 using Microsoft.CodeAnalysis.FindSymbols;
 using Microsoft.CodeAnalysis.Host;       // HostWorkspaceServices / HostServices
 using Microsoft.CodeAnalysis.Operations;   // IInvocationOperation / IObjectCreationOperation (callees walk)
+using Microsoft.CodeAnalysis.Rename;       // Renamer (vs_rename)
 using Microsoft.CodeAnalysis.Text;
 using Microsoft.VisualStudio.ComponentModelHost;
 using Microsoft.VisualStudio.LanguageServices;
@@ -285,6 +286,101 @@ internal static class RoslynReader
         return payload;
     }
 
+    /// <summary>
+    /// vs_rename (ROADMAP "rename / safe refactors"): Roslyn Renamer — the semantic rename that catches
+    /// every reference grep can't (interfaces, overrides, generics, aliases). PREVIEW BY DEFAULT: without
+    /// apply=true it only reports what would change. apply=true commits via workspace.TryApplyChanges on
+    /// the UI thread — a single VS undo unit (Ctrl+Z reverts the whole rename). TryApplyChanges fails
+    /// cleanly if the solution changed under us (user typed mid-rename) — re-run in that case.
+    /// </summary>
+    public static async Task<JObject> RenameAsync(JToken args, CancellationToken ct)
+    {
+        string? newName = (string?)args["newName"];
+        bool apply = (bool?)args["apply"] ?? false;
+        if (string.IsNullOrWhiteSpace(newName))
+            return Err("Pass 'newName' (the new identifier).");
+        // Cheap identifier sanity (dep-free: Microsoft.CodeAnalysis.CSharp isn't compile-referenced).
+        if (!(char.IsLetter(newName![0]) || newName[0] == '_') || !newName.All(c => char.IsLetterOrDigit(c) || c == '_'))
+            return Err($"'{newName}' is not a valid identifier.");
+
+        // Hold the WORKSPACE (not just a snapshot) — apply needs TryApplyChanges on the live instance.
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync(ct);
+        var workspace = GetWorkspace();
+        var solution = workspace?.CurrentSolution;
+        await TaskScheduler.Default;
+        if (workspace == null || solution == null || !solution.Projects.Any()) return Unavailable();
+
+        var (symbol, error) = await ResolveSymbolAsync(solution, args, ct);
+        if (symbol == null) return error!;
+        if (!symbol.Locations.Any(l => l.IsInSource))
+            return Err("Symbol has no source declaration (metadata symbols can't be renamed).");
+
+        Solution renamed;
+        try
+        {
+            renamed = await Renamer.RenameSymbolAsync(
+                solution, symbol, new SymbolRenameOptions(), newName!, ct).ConfigureAwait(false);
+        }
+        catch (Exception e) { return Err($"Rename failed: {e.Message}"); }
+
+        // Diff the solutions → per-file change counts + sample lines for the preview.
+        var files = new JArray();
+        int totalEdits = 0;
+        foreach (var pc in renamed.GetChanges(solution).GetProjectChanges())
+        {
+            foreach (var docId in pc.GetChangedDocuments())
+            {
+                ct.ThrowIfCancellationRequested();
+                var oldDoc = solution.GetDocument(docId);
+                var newDoc = renamed.GetDocument(docId);
+                if (oldDoc == null || newDoc == null) continue;
+                var changes = (await newDoc.GetTextChangesAsync(oldDoc, ct).ConfigureAwait(false)).ToList();
+                if (changes.Count == 0) continue;
+                totalEdits += changes.Count;
+                var oldText = await oldDoc.GetTextAsync(ct).ConfigureAwait(false);
+                var sample = new JArray();
+                foreach (var ch in changes.Take(5))
+                {
+                    var line = oldText.Lines.GetLineFromPosition(ch.Span.Start);
+                    sample.Add(new JObject { ["line"] = line.LineNumber + 1, ["text"] = line.ToString().Trim() });
+                }
+                files.Add(new JObject
+                {
+                    ["file"] = oldDoc.FilePath,
+                    ["edits"] = changes.Count,
+                    ["sample"] = sample,
+                });
+            }
+        }
+
+        var payload = new JObject
+        {
+            ["available"] = true,
+            ["symbol"] = DescribeSymbol(symbol, symbol.GetDocumentationCommentId()),
+            ["newName"] = newName,
+            ["fileCount"] = files.Count,
+            ["totalEdits"] = totalEdits,
+            ["files"] = files,
+        };
+
+        if (!apply)
+        {
+            payload["applied"] = false;
+            payload["note"] = "Preview only. Re-run with apply=true to commit (one VS undo unit; Ctrl+Z reverts).";
+            return payload;
+        }
+
+        await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync(ct);
+        bool ok;
+        try { ok = workspace.TryApplyChanges(renamed); }
+        catch (Exception e) { ok = false; payload["applyError"] = e.Message; }
+        await TaskScheduler.Default;
+        payload["applied"] = ok;
+        if (!ok && payload["applyError"] == null)
+            payload["applyError"] = "TryApplyChanges returned false — the solution changed while renaming. Re-run vs_rename.";
+        return payload;
+    }
+
     /// <summary>All named types in a namespace, including nested, recursively.</summary>
     private static IEnumerable<INamedTypeSymbol> AllTypes(INamespaceSymbol ns)
     {
@@ -551,49 +647,83 @@ internal static class RoslynReader
 
         if (direction == "callees")
         {
-            var cache = new Dictionary<DocumentId, SourceText>();
-            var seen = new HashSet<string>(StringComparer.Ordinal);
-            var callees = new JArray();
-            foreach (var sref in symbol.DeclaringSyntaxReferences)
+            // Transitive callee tree (was depth-1 until 1.16.0): same IOperation walk per node, recursed
+            // depth-capped + cycle-guarded exactly like the callers direction. Only callees with SOURCE
+            // (in-solution) recurse — framework/library targets are leaves by definition.
+            var visitedCallees = new HashSet<string>(StringComparer.Ordinal);
+            int budget = nodeBudget;
+
+            async Task<List<IMethodSymbol>> DirectCalleesAsync(ISymbol sym)
             {
-                var node = await sref.GetSyntaxAsync(ct).ConfigureAwait(false);
-                var doc = solution.GetDocument(node.SyntaxTree);
-                if (doc == null) continue;
-                var model = await doc.GetSemanticModelAsync(ct).ConfigureAwait(false);
-                var op = model?.GetOperation(node, ct);
-                if (op == null) continue;
-                // Explicit IOperation walk (ChildOperations) rather than the Descendants() extension, which
-                // collides with an unrelated Descendants<T> overload. Language-agnostic: works for C# and VB.
-                var stack = new Stack<IOperation>();
-                stack.Push(op);
-                while (stack.Count > 0)
+                var found = new List<IMethodSymbol>();
+                var seen = new HashSet<string>(StringComparer.Ordinal);
+                foreach (var sref in sym.DeclaringSyntaxReferences)
                 {
-                    var d = stack.Pop();
-                    foreach (var child in d.ChildOperations) stack.Push(child);
-                    IMethodSymbol? target = d switch
+                    var node = await sref.GetSyntaxAsync(ct).ConfigureAwait(false);
+                    var doc = solution.GetDocument(node.SyntaxTree);
+                    if (doc == null) continue;
+                    var model = await doc.GetSemanticModelAsync(ct).ConfigureAwait(false);
+                    var op = model?.GetOperation(node, ct);
+                    if (op == null) continue;
+                    // Explicit IOperation walk (ChildOperations) rather than the Descendants() extension, which
+                    // collides with an unrelated Descendants<T> overload. Language-agnostic: works for C# and VB.
+                    var stack = new Stack<IOperation>();
+                    stack.Push(op);
+                    while (stack.Count > 0)
                     {
-                        IInvocationOperation io => io.TargetMethod,
-                        IObjectCreationOperation oco => oco.Constructor,
-                        _ => null,
-                    };
-                    if (target == null) continue;
-                    var id = target.GetDocumentationCommentId();
-                    if (id != null && !seen.Add(id)) continue;
-                    if (callees.Count >= nodeBudget) { truncated = true; break; }
-                    callees.Add(DescribeSymbol(target, id));
+                        var d = stack.Pop();
+                        foreach (var child in d.ChildOperations) stack.Push(child);
+                        IMethodSymbol? target = d switch
+                        {
+                            IInvocationOperation io => io.TargetMethod,
+                            IObjectCreationOperation oco => oco.Constructor,
+                            _ => null,
+                        };
+                        if (target == null) continue;
+                        var tid = target.GetDocumentationCommentId();
+                        if (tid != null && !seen.Add(tid)) continue;
+                        found.Add(target);
+                    }
                 }
-                if (truncated) break;
+                return found;
             }
+
+            async Task<JArray> CalleesOfAsync(ISymbol sym, int depth)
+            {
+                var arr = new JArray();
+                if (depth > MaxCallerDepth || budget <= 0) return arr;
+                foreach (var target in await DirectCalleesAsync(sym))
+                {
+                    ct.ThrowIfCancellationRequested();
+                    if (budget <= 0) { truncated = true; break; }
+                    budget--;
+                    var id = target.GetDocumentationCommentId();
+                    var node = DescribeSymbol(target, id);
+                    bool hasSource = target.Locations.Any(l => l.IsInSource);
+                    if (hasSource && id != null && visitedCallees.Add(id))
+                    {
+                        var sub = await CalleesOfAsync(target, depth + 1);
+                        if (sub.Count > 0) node["callees"] = sub;
+                    }
+                    else if (hasSource && id != null)
+                    {
+                        node["recursionElided"] = true;   // already expanded elsewhere — don't loop
+                    }
+                    arr.Add(node);
+                }
+                return arr;
+            }
+
+            var calleeTree = await CalleesOfAsync(symbol, 1);
             var p = new JObject
             {
                 ["available"] = true,
                 ["method"] = DescribeSymbol(symbol, symbol.GetDocumentationCommentId()),
                 ["direction"] = "callees",
-                ["note"] = "Direct callees only (depth 1).",
-                ["count"] = callees.Count,
-                ["callees"] = callees,
+                ["maxDepth"] = MaxCallerDepth,
+                ["callees"] = calleeTree,
             };
-            Mark(p, truncated, nodeBudget, "callees");
+            Mark(p, truncated, nodeBudget, "callee nodes");
             return p;
         }
 

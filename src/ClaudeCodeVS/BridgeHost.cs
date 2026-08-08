@@ -466,6 +466,9 @@ internal sealed class BridgeHost : IDisposable
         yield return new VsBreakOnThrownTool(driver);     // first-chance break at a managed exception's throw site
         yield return new VsFreezeThreadTool(driver);      // freeze/thaw a thread
         yield return new VsSetNextStatementTool(driver);  // move the execution pointer
+        yield return new VsSetTracepointTool(driver);     // log-and-continue probe (simulated tracepoint)
+        yield return new VsGetTracepointTool(driver);     // read a tracepoint's value timeline
+        yield return new VsRemoveTracepointTool(driver);  // disarm + final timeline
         // Phase 3 - session control (start = F5 to first break, stop = Shift+F5).
         yield return new VsStartDebuggingTool(driver);
         yield return new VsStopDebuggingTool(driver);
@@ -484,6 +487,12 @@ internal sealed class BridgeHost : IDisposable
         // staged as attachment chips, path returned for a native-cost Read.
         yield return new VsCaptureWindowTool();
         yield return new VsCaptureScreenTool();
+
+        // Profiling (ungated observation, like the ClrMD reads): shell out to the dotnet diagnostics
+        // CLIs against the debuggee (or any) PID - counters, CPU sampling top-N, GC heap top types.
+        yield return new VsPerfCountersTool();
+        yield return new VsTraceCpuTool();
+        yield return new VsGcDumpTool();
     }
 
     /// <summary>
@@ -499,8 +508,9 @@ internal sealed class BridgeHost : IDisposable
         yield return new VsFindReferencesTool();       // semantic find-all-references
         yield return new VsGoToDefinitionTool();       // the one definition among overloads
         yield return new VsFindImplementationsTool();  // interface/abstract -> concrete + overrides
-        yield return new VsCallHierarchyTool();        // transitive callers / direct callees
+        yield return new VsCallHierarchyTool();        // transitive callers / transitive callees
         yield return new VsTypeHierarchyTool();        // base chain+interfaces / derived types
+        yield return new VsRenameTool();               // Roslyn Renamer: preview-by-default, apply = one undo unit
     }
 
     /// <summary>Best-effort workspace root for the lockfile: the open solution's directory, else none.</summary>

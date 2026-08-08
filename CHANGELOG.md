@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.17.0 - 2026-08-08
+
+The ROADMAP sweep — five items land in one release. Per-feature test guide: [`docs/TESTING-NEW-FEATURES.md`](docs/TESTING-NEW-FEATURES.md).
+
+### Features
+
+- **Transitive callees.** `vs_call_hierarchy direction:callees` now recurses the callee graph (depth-capped, cycle-guarded, budget-signaled — same discipline as callers). Only in-solution callees recurse; framework targets are leaves.
+- **`vs_rename` (vs-semantic).** Solution-wide semantic rename via Roslyn `Renamer` — resolves through interfaces, overrides, partials, generics, aliases. Preview by default (per-file edit counts + sample lines); `apply=true` commits as ONE VS undo unit (Ctrl+Z reverts everything); fails cleanly if the solution changed mid-rename.
+- **Tracepoints (vs-debug, gated drive).** `vs_set_tracepoint(file, line, expressions[], maxHits)` = log-and-continue probe without editing code: each pass evaluates the expressions, records `{seq, time, values}`, auto-continues. `vs_get_tracepoint` polls the timeline; `vs_remove_tracepoint` disarms; auto-disables at `maxHits`.
+- **Profiling (vs-debug).** `vs_perf_counters` (CPU %, GC, alloc rate, threadpool via dotnet-counters), `vs_trace_cpu` (top hot methods via dotnet-trace cpu-sampling), `vs_gc_dump` (top types by size via dotnet-gcdump; dump kept for VS/PerfView). Default PID = the current debuggee; clear install hint when a CLI is missing.
+- **Capture region crop.** `region:{x,y,width,height}` on `vs_capture_window` / `vs_capture_screen` — crop dense screens to the area of interest (full detail, fewer tokens). Out-of-bounds clamps.
+
 ## 1.16.0 - 2026-08-08
 
 Two ROADMAP items land: precise diagnostics and the fix-verify shortcut.
