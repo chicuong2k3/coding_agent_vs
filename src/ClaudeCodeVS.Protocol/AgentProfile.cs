@@ -67,8 +67,9 @@ public sealed class AgentProfile
 
     /// <summary>
     /// True when the agent discovers and connects to the IDE WebSocket via a lockfile. False means the
-    /// only channel it has is the pull MCP servers, so selection push, attachments, and the diff gate
-    /// are all unavailable - the debugger/semantic/test tools still are.
+    /// IDE push channels (selection_changed / at_mentioned) are unavailable - but the diff gate and
+    /// turn-end toasts come back via the auto-deployed agent stub, and selection/attachments are
+    /// reachable as pull tools (vs_get_selection / vs_list_attachments) on the MCP servers.
     /// </summary>
     public bool SupportsIdeSocket => IdeDir != null;
 
@@ -135,9 +136,11 @@ public sealed class AgentProfile
     /// <summary>
     /// opencode. It is already a client of the SAME IDE contract: it scans <c>~/.claude/ide/*.lock</c>,
     /// presents <c>x-claude-code-ide-authorization</c>, and speaks MCP <c>2025-11-25</c> - so it connects
-    /// to our existing socket with no protocol work. It consumes only the <c>selection_changed</c> and
-    /// <c>at_mentioned</c> notifications, and has no shell-command hook system (its equivalent is a JS
-    /// plugin), so the diff gate is off and its MCP registration uses opencode.json's own shape.
+    /// to our existing socket with no protocol work. It consumes the <c>selection_changed</c> and
+    /// <c>at_mentioned</c> notifications. It has no shell-command hook system (its equivalent is a JS
+    /// plugin), so the diff gate + turn-end toasts ride the auto-deployed
+    /// <c>.opencode/plugins/vs-diff-gate.js</c> instead of hooks; only break-state context injection
+    /// stays off (no per-turn context hook). MCP registration uses opencode.json's own shape.
     /// </summary>
     public static AgentProfile OpenCode { get; } = new(
         id: "opencode",
@@ -161,7 +164,9 @@ public sealed class AgentProfile
     /// <summary>
     /// Oh My Pi (`omp`). No lockfile, no IDE WebSocket - its editor integration is stdio (ACP / RPC),
     /// which our in-proc bridge can't host. What it DOES have is an MCP client that imports a workspace
-    /// <c>.mcp.json</c>, so the whole pull surface (debugger, semantic, tests, capture) ports as-is.
+    /// <c>.mcp.json</c>, so the whole pull surface (debugger, semantic, tests, capture) ports as-is,
+    /// and the auto-deployed <c>.omp/extensions/vs-diff-gate.ts</c> stub restores the diff gate +
+    /// turn-end toasts. The IDE push channels stay off - nothing is auto-injected into omp's context.
     /// </summary>
     public static AgentProfile OhMyPi { get; } = new(
         id: "oh-my-pi",

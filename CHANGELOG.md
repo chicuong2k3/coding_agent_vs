@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.19.0 - 2026-08-09
+
+**Multi-agent** — the panel's Agent picker launches a second agent through the same bridge. Full analysis: [`docs/MULTI-AGENT.md`](docs/MULTI-AGENT.md).
+
+### Features
+
+- **OpenCode.** Already a client of the same IDE contract (scans `~/.claude/ide/*.lock`, presents the same auth header, speaks MCP 2025-11-25), so it connects to the existing socket as-is. It has no shell-command hook system, so the extension auto-deploys its JS plugin (`.opencode/plugins/vs-diff-gate.js`) on Launch: the Accept/Reject diff gate and turn-end notifications then work exactly like Claude Code's hooks. Break-state context injection stays off (opencode has no per-turn context hook). Selection, attachments, and the `vs-debug` / `vs-semantic` tools all work.
+- **Oh My Pi (`omp`).** Connects over stdio (ACP), not the IDE WebSocket, so the extension auto-deploys a `.omp/extensions/vs-diff-gate.ts` stub on Launch: the diff gate and turn-end toasts are restored; selection and attachments are reachable via pull tools (`vs_get_selection` / `vs_list_attachments`) that Oh My Pi imports. The IDE push channels stay off — nothing is auto-injected into omp's context. The `vs-debug` / `vs-semantic` MCP tools work via its `.mcp.json` import.
+- **The bridge serves every agent at once** (one port, one auth token, a lockfile per distinct discovery dir); the picker only decides which CLI Launch spawns, and the choice persists across restarts.
+
 ## 1.18.0 - 2026-08-08
 
 The remaining small/medium ROADMAP items.
