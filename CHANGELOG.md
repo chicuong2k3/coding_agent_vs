@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.21.4 - 2026-08-09
+
+### Fixes
+
+- **Closing OpenCode / Oh My Pi left the pill on Connected for up to ~2 minutes.** Claude Code greys instantly (WS disconnect), but the stub agents' presence rode a 30s heartbeat with a 90s TTL and a 30s sweep. Tightened to a 10s beat / 30s TTL / 10s sweep (grey ≤ ~40s after the CLI dies), and omp now sends an explicit `bye` on `session_shutdown` (`/agent-heartbeat {bye:true}`) for a near-instant grey.
+
 ## 1.21.3 - 2026-08-09
 
 ### Fixes

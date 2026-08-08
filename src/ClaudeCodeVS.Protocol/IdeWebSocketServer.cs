@@ -85,13 +85,13 @@ public sealed class IdeWebSocketServer
     public Func<CancellationToken, Task<string>>? AgentContextHandler { get; set; }
 
     /// <summary>
-    /// Raised on each POST /agent-heartbeat (body {agent}) from a per-agent stub. Agents that never
-    /// open the IDE WebSocket (omp) - or connect late (opencode) - have no ConnectionChanged signal,
-    /// so their stubs beat every ~30s while the CLI is alive; the VSIX greens the panel pill on the
-    /// first beat and greys it when beats stop (and no WS client is attached). The string is the
-    /// agent's display name.
+    /// Raised on each POST /agent-heartbeat (body {agent, bye?}) from a per-agent stub. Agents that
+    /// never open the IDE WebSocket (omp) - or connect late (opencode) - have no ConnectionChanged
+    /// signal, so their stubs beat every ~10s while the CLI is alive; the VSIX greens the panel pill
+    /// on the first beat and greys it when beats stop (and no WS client is attached). bye=true is an
+    /// explicit shutdown (omp's session_shutdown) for an instant grey. Args: (displayName, bye).
     /// </summary>
-    public event Action<string>? AgentHeartbeat;
+    public event Action<string, bool>? AgentHeartbeat;
 
     /// <summary>
     /// Secondary MCP surface for the Phase 2 debug PULL channel (POST /mcp). The CLI launches a tiny
@@ -405,8 +405,8 @@ public sealed class IdeWebSocketServer
             string body;
             using (var reader = new StreamReader(ctx.Request.InputStream, Encoding.UTF8))
                 body = await reader.ReadToEndAsync();
-            var agent = (string?)JObject.Parse(body)["agent"] ?? "agent";
-            AgentHeartbeat?.Invoke(agent);
+            var o = JObject.Parse(body);
+            AgentHeartbeat?.Invoke((string?)o["agent"] ?? "agent", (bool?)o["bye"] ?? false);
         }
         catch (Exception e)
         {

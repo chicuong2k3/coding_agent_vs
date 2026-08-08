@@ -48,10 +48,11 @@ internal sealed class BridgeHost : IDisposable
     private volatile bool _mcpEverSeen;
 
     // Connected-pill state for agents WITHOUT a live IDE WebSocket (omp always, opencode until/unless
-    // it attaches). Their stubs POST /agent-heartbeat every ~30s; the pill is green while EITHER a WS
+    // it attaches). Their stubs POST /agent-heartbeat every ~10s; the pill is green while EITHER a WS
     // client is attached OR a heartbeat is fresh. HTTP has no disconnect, so a sweep timer greys the
-    // pill once beats stop. ponytail: one sliding window, no per-agent registry - the pill is a bool.
-    private static readonly TimeSpan HeartbeatTtl = TimeSpan.FromSeconds(90);
+    // pill once beats stop (≤ ~40s after the CLI dies; omp also sends an explicit bye on shutdown for
+    // an instant grey). ponytail: one sliding window, no per-agent registry - the pill is a bool.
+    private static readonly TimeSpan HeartbeatTtl = TimeSpan.FromSeconds(30);
     private bool _wsConnected;
     private DateTime _lastBeatUtc = DateTime.MinValue;
     private Timer? _presenceSweep;
@@ -130,19 +131,26 @@ internal sealed class BridgeHost : IDisposable
         // Heartbeats from the per-agent stubs (POST /agent-heartbeat): green the pill for agents that
         // don't (or don't yet) hold the IDE WebSocket. The sweep timer greys it once beats stop for
         // HeartbeatTtl and no WS client is attached.
-        _server.AgentHeartbeat += agent =>
+        _server.AgentHeartbeat += (agent, bye) =>
         {
-            var wasFresh = HeartbeatFresh;
+            if (bye)
+            {
+                // Explicit shutdown (omp's session_shutdown): grey immediately instead of waiting
+                // out the TTL. A WS client still attached keeps the pill green.
+                _lastBeatUtc = DateTime.MinValue;
+                if (Ui.BridgeStatus.Connected && !_wsConnected)
+                {
+                    Log.Info($"agent bye: {agent} shut down -> disconnected");
+                    Ui.BridgeStatus.SetConnected(false);
+                }
+                return;
+            }
             _lastBeatUtc = DateTime.UtcNow;
             if (!Ui.BridgeStatus.Connected)
             {
                 Log.Info($"agent heartbeat: {agent} is alive -> connected");
                 Ui.BridgeStatus.SetConnected(true);
                 InstallScriptsOffThread(); // manual launches (no Launch button) still get their scripts
-            }
-            else if (!wasFresh && !_wsConnected)
-            {
-                Log.Info($"agent heartbeat: {agent}");
             }
         };
         _presenceSweep = new Timer(_ =>
@@ -156,7 +164,7 @@ internal sealed class BridgeHost : IDisposable
                 }
             }
             catch { /* sweep must never throw */ }
-        }, null, TimeSpan.FromSeconds(30), TimeSpan.FromSeconds(30));
+        }, null, TimeSpan.FromSeconds(10), TimeSpan.FromSeconds(10));
 
         // Single-gate: the PreToolUse hook POSTs to /permission, which routes here to show the diff.
         _server.PermissionHandler = ShowPermissionDiffAsync;

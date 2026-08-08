@@ -166,8 +166,9 @@ export const VsDiffGate = async () => {
   const bridge = await findBridge();
 
   // Presence heartbeat: opencode may attach to the IDE WebSocket late (or not at all), which left
-  // the panel pill grey even though the session was live. Beat /agent-heartbeat every 30s so the
-  // extension greens "Connected" from plugin load; beats stopping (process exit) grey it again.
+  // the panel pill grey even though the session was live. Beat /agent-heartbeat every 10s so the
+  // extension greens "Connected" from plugin load; beats stopping (process exit) grey it within
+  // ~40s (30s TTL + 10s sweep on the bridge side).
   if (bridge) {
     const beat = () =>
       fetch(`http://127.0.0.1:${bridge.port}/agent-heartbeat`, {
@@ -179,7 +180,7 @@ export const VsDiffGate = async () => {
         body: JSON.stringify({ agent: "OpenCode" }),
       }).catch(() => {});
     beat();
-    setInterval(beat, 30_000).unref?.(); // unref: never keep the CLI process alive just to beat
+    setInterval(beat, 10_000).unref?.(); // unref: never keep the CLI process alive just to beat
   }
 
   return {

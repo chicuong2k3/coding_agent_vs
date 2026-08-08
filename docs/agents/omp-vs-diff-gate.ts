@@ -191,21 +191,27 @@ export default async function vsDiffGate(pi: ExtensionAPI) {
   const bridge = await findBridge();
 
   // Presence heartbeat: omp never opens the IDE WebSocket, so the panel pill had no signal to turn
-  // green. Beat /agent-heartbeat every 30s from extension load; the extension greens "Connected" on
-  // the first beat and greys it once beats stop (process exit).
+  // green. Beat /agent-heartbeat every 10s from extension load; the extension greens "Connected" on
+  // the first beat, greys ~instantly on the session_shutdown bye below, and greys within ~40s if
+  // omp dies without one (30s TTL + 10s sweep on the bridge side).
   if (bridge) {
-    const beat = () =>
+    const post = (body: Record<string, unknown>) =>
       fetch(`http://127.0.0.1:${bridge.port}/agent-heartbeat`, {
         method: "POST",
         headers: {
           "x-claude-code-ide-authorization": bridge.token,
           "content-type": "application/json",
         },
-        body: JSON.stringify({ agent: "Oh My Pi" }),
+        body: JSON.stringify(body),
       }).catch(() => {});
+    const beat = () => post({ agent: "Oh My Pi" });
     beat();
     // unref: never keep omp alive just to beat (Node timers only; typed loosely for dom lib)
-    (setInterval(beat, 30_000) as unknown as { unref?: () => void }).unref?.();
+    (setInterval(beat, 10_000) as unknown as { unref?: () => void }).unref?.();
+    // Explicit bye on session teardown -> the pill greys immediately instead of TTL-ing out.
+    (pi.on as (ev: string, h: () => void | Promise<void>) => void)(
+      "session_shutdown", () => void post({ agent: "Oh My Pi", bye: true }),
+    );
   }
 
   // Throttle turn-end toasts: a "turn" ends on every model reply, but we only want the toast
