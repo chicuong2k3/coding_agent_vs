@@ -106,6 +106,46 @@ dotnet tool install -g dotnet-gcdump
 
 ---
 
+## 1.18.0
+
+### 8. Per-frame source trong call stack (`vs_debug_state` / `vs_threads`)
+
+**Là gì:** mỗi frame trong call stack giờ kèm file + line (trước chỉ có tên hàm; chỉ dòng đang dừng có vị trí).
+
+**Test:**
+1. F5 một app, dừng ở breakpoint sâu vài tầng gọi (ví dụ `demo/ComboScore`).
+2. Hỏi Claude: *"Call stack hiện tại? — vs_debug_state."*
+3. **Đạt:** các frame code-của-bạn có `file` + `line`; frame framework (không symbol) chỉ có tên — đúng thiết kế.
+4. `vs_threads`: frame dạng chuỗi có hậu tố ` (đường\dẫn\file.cs:42)`.
+
+### 9. Hunt idle-wait (`vs_hunt_flaky` với `measureRate`)
+
+**Là gì:** giữa các lượt hunt, chờ engine thật sự idle (qua `IOperationState`) thay vì delay cứng — `measureRate` không còn đếm thiếu vì engine churn.
+
+**Test (dùng `demo/TestLab`, test intermittent ~1-in-3):**
+1. *"Hunt test X 12 lượt, đo tỉ lệ fail — vs_hunt_flaky measureRate:true."*
+2. **Đạt:** `executed` đạt đủ 12 (trước đây hay hụt do inconclusive), tỉ lệ fail ~1/3. So sánh cảm quan với trước là đủ.
+
+### 10. `vs_run_test profile:true` (experimental)
+
+**Là gì:** chạy test dưới profiler với GUID tool CPU Usage của Diagnostics Hub (dò bằng reflection, override được bằng `profilerToolId`).
+
+**Test:**
+1. *"Chạy test X dưới profiler — vs_run_test profile:true."*
+2. **Đạt:** run KHÔNG còn trả `Status=Cancelled` + note cũ; có kết quả per-test (và có thể một file .diagsession trong attachments).
+3. **Nếu vẫn Cancelled:** GUID/property không khớp bản VS — đây là feature experimental; báo lại kết quả để gỡ tiếp (thử `profilerToolId` khác).
+
+### 11. Panel usage breakdown
+
+**Là gì:** dòng mới trong stats card: chia token subagent (CHÍNH XÁC, từ usage records sidechain) + top tool ngốn context (ƯỚC LƯỢNG, size tool_result / 4).
+
+**Test:**
+1. Chạy một phiên có dùng tool nhiều (bảo Claude đọc vài file, gọi vs_debug_state…) và một tác vụ có subagent (bảo Claude "dùng agent tìm X").
+2. Sau mỗi lượt trả lời, nhìn stats card trên panel.
+3. **Đạt:** xuất hiện dòng mờ dạng `Subagents (exact): 5 calls · ↑ 12k ↓ 3k      Top tools (est.): Read ≈40k · vs_debug_state ≈12k`. Không dùng subagent/tool thì dòng ẩn.
+
+---
+
 ## 1.15.0 (nền tảng — không có UI mới để test riêng)
 
 - **Multi-agent `AgentProfile`**: toàn bộ điểm phụ thuộc Claude (lockfile dir, binary, env vars, auth header, đường config, cờ hooks/MCP) gom về `src/ClaudeCodeVS.Protocol/AgentProfile.cs`. Hành vi Claude Code giữ nguyên — test = mọi thứ cũ vẫn chạy. Chi tiết: `docs/MULTI-AGENT.md`.

@@ -1,5 +1,22 @@
 # Changelog
 
+## 1.18.0 - 2026-08-08
+
+The remaining small/medium ROADMAP items.
+
+### Features
+
+- **Per-frame source in call stacks.** `vs_debug_state` frames now carry `file` + `line` per frame (EnvDTE90a `StackFrame2` — no AD7 needed, same "cast up to the newer automation interface" lesson as break-on-thrown); `vs_threads` appends ` (file:line)` to its string frames. Frames without symbols stay name-only.
+- **Hunt idle-wait.** Between flaky-hunt/repro runs the engine is polled for real IDLE via `IOperationState` (guarded reflection; falls back to the old fixed delay on shape drift) — `measureRate` no longer under-samples on engine cancellation churn.
+- **`vs_run_test profile:true` wired (experimental).** Sets the Diagnostics Hub CPU Usage tool id on `TestRunOptions` (name-scanned property, type-matched); `profilerToolId` overrides the GUID. Unverified against a live run — marked experimental.
+- **Panel usage breakdown.** A new stats line: exact subagent split (sidechain usage records: calls + ↑/↓ tokens) and estimated top context consumers per tool (`tool_result` sizes at ~4 chars/token, e.g. `Read ≈40k · vs_debug_state ≈12k`). Shown only when the transcript yields one; estimates labeled as such.
+
+### Fixes (PR #1 review)
+
+- Profiling CLI processes are disposed and killed on cancellation/timeout.
+- `getDiagnostics` precise-span upgrade merges with Error List entries (dedupe by line+message) instead of replacing.
+- Manifest installation target confirmed `[17.14,)` — deliberate (future VS majors), the Qodo rule should be updated to match.
+
 ## 1.17.0 - 2026-08-08
 
 The ROADMAP sweep — five items land in one release. Per-feature test guide: [`docs/TESTING-NEW-FEATURES.md`](docs/TESTING-NEW-FEATURES.md).
@@ -11,12 +28,6 @@ The ROADMAP sweep — five items land in one release. Per-feature test guide: [`
 - **Tracepoints (vs-debug, gated drive).** `vs_set_tracepoint(file, line, expressions[], maxHits)` = log-and-continue probe without editing code: each pass evaluates the expressions, records `{seq, time, values}`, auto-continues. `vs_get_tracepoint` polls the timeline; `vs_remove_tracepoint` disarms; auto-disables at `maxHits`.
 - **Profiling (vs-debug).** `vs_perf_counters` (CPU %, GC, alloc rate, threadpool via dotnet-counters), `vs_trace_cpu` (top hot methods via dotnet-trace cpu-sampling), `vs_gc_dump` (top types by size via dotnet-gcdump; dump kept for VS/PerfView). Default PID = the current debuggee; clear install hint when a CLI is missing.
 - **Capture region crop.** `region:{x,y,width,height}` on `vs_capture_window` / `vs_capture_screen` — crop dense screens to the area of interest (full detail, fewer tokens). Out-of-bounds clamps.
-
-### Fixes (PR #1 review)
-
-- Profiling CLI processes are now disposed and killed on cancellation/timeout (no orphaned `dotnet-trace` holding a session).
-- `getDiagnostics` precise-span upgrade now MERGES with Error List entries (dedupe by line+message) instead of replacing — MSBuild/analyzer-only entries for the same file are kept.
-- Manifest installation target stays `[17.14,)` — DELIBERATE: the unbounded upper end lets future VS majors install without a re-release. The Qodo compliance rule 2396913 (`[17.14,19.0)`) predates this decision and should be updated to match.
 
 ## 1.16.0 - 2026-08-08
 

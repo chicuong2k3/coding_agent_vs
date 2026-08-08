@@ -70,7 +70,8 @@ internal sealed class VsRunTestTool : IIdeTool
         {
             ["test"] = new JObject { ["type"] = "string", ["description"] = "Fully-qualified test name to run (e.g. 'TestLab.ScoreTests.Add_TwoPositives_Sums'). Omit to run all tests." },
             ["collectCoverage"] = new JObject { ["type"] = "boolean", ["description"] = "Collect code coverage; the .coverage file path is returned under response.attachments (default false)." },
-            ["profile"] = new JObject { ["type"] = "boolean", ["description"] = "Run under the profiler (TestHostMode.Profile) instead of a plain run (default false)." },
+            ["profile"] = new JObject { ["type"] = "boolean", ["description"] = "Run under the profiler (TestHostMode.Profile + the Diagnostics Hub CPU Usage tool; experimental) instead of a plain run (default false)." },
+            ["profilerToolId"] = new JObject { ["type"] = "string", ["description"] = "Override the Diagnostics Hub tool GUID used for profile:true (default: the CPU Usage tool)." },
         },
     };
 
@@ -79,7 +80,7 @@ internal sealed class VsRunTestTool : IIdeTool
         string? test = (string?)args["test"];
         bool coverage = (bool?)args["collectCoverage"] ?? false;
         bool profile = (bool?)args["profile"] ?? false;
-        var result = await _runner.RunAsync(test, coverage, profile, ct);
+        var result = await _runner.RunAsync(test, coverage, profile, ct, profilerToolId: (string?)args["profilerToolId"]);
         string status = (string?)result["response"]?["Status"] ?? ((bool?)result["ok"] == true ? "?" : "error");
         Log.Info($"vs_run_test(test={test ?? "*"}, cov={coverage}, prof={profile}) -> {status}, {(int?)result["testCount"] ?? 0} result(s){((bool?)result["ok"] == false ? $", error={(string?)result["error"]}" : "")}");
         Ui.BridgeStatus.RecordDebugInspect();

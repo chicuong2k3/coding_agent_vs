@@ -45,6 +45,7 @@ internal sealed class ClaudeToolWindowControl : UserControl
     private readonly TextBlock _debugLine;
     private readonly TextBlock _latestLine;
     private readonly TextBlock _sessionLine;
+    private readonly TextBlock _breakdownLine; // subagent split (exact) + top tools (estimate)
     private readonly Border _pendingCard;
     private readonly TextBlock _pendingText;
     private readonly Border _toolsWarningCard;
@@ -206,6 +207,7 @@ internal sealed class ClaudeToolWindowControl : UserControl
         _debugLine = new TextBlock { FontSize = 12, Opacity = 0.9, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 2, 0, 0) };
         _latestLine = new TextBlock { FontSize = 12, Opacity = 0.9, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 4, 0, 0) };
         _sessionLine = new TextBlock { FontSize = 12, Opacity = 0.9, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 2, 0, 0) };
+        _breakdownLine = new TextBlock { FontSize = 11, Opacity = 0.7, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 2, 0, 0), Visibility = Visibility.Collapsed };
 
         // Cost is an estimate, so it's gated behind a toggle rather than shown by default.
         _costButton = MakeButton("≈ Show est. cost", ToggleCost);
@@ -219,6 +221,7 @@ internal sealed class ClaudeToolWindowControl : UserControl
         statsStack.Children.Add(_debugLine);
         statsStack.Children.Add(_latestLine);
         statsStack.Children.Add(_sessionLine);
+        statsStack.Children.Add(_breakdownLine);
         statsStack.Children.Add(_costRow);
         var statsCard = new Border
         {
@@ -435,6 +438,17 @@ internal sealed class ClaudeToolWindowControl : UserControl
             (BridgeStatus.Turns > 0 ? $"  ·  {BridgeStatus.Turns} turns{model}" : "");
         _latestLine.Opacity = BridgeStatus.HasUsage ? 0.9 : 0.55;
         _sessionLine.Opacity = BridgeStatus.HasUsage ? 0.9 : 0.55;
+
+        // Breakdown line: only when the transcript actually yielded one (subagents used / tools ran).
+        if (!string.IsNullOrEmpty(BridgeStatus.UsageBreakdown))
+        {
+            _breakdownLine.Text = BridgeStatus.UsageBreakdown;
+            _breakdownLine.Visibility = Visibility.Visible;
+        }
+        else
+        {
+            _breakdownLine.Visibility = Visibility.Collapsed;
+        }
 
         if (BridgeStatus.HasUsage)
         {
