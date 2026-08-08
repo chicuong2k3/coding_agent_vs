@@ -7,6 +7,12 @@ Tài liệu này liệt kê từng tính năng vừa thêm và cách test thủ 
 2. Mở một solution C# trong VS 2026 — dùng `demo/TestLab` (test tools) và `demo/RefMaze` (semantic tools) là tiện nhất.
 3. **View > Other Windows > Claude Code** → **Launch Claude Code**, chờ pill **Connected**.
 4. Các tool `vs_*` gọi qua Claude: cứ gõ yêu cầu tự nhiên (ví dụ bên dưới) hoặc bảo Claude "gọi tool X với tham số Y".
+5. **Riêng mục profiling (mục 6):** cài 3 CLI một lần trước khi test — **mỗi cái một lệnh riêng** (`dotnet tool install` không nhận nhiều tên gói một lúc):
+   ```powershell
+   dotnet tool install -g dotnet-counters
+   dotnet tool install -g dotnet-trace
+   dotnet tool install -g dotnet-gcdump
+   ```
 
 ---
 
@@ -74,7 +80,7 @@ Tài liệu này liệt kê từng tính năng vừa thêm và cách test thủ 
 
 **Là gì:** shell-out sang dotnet diagnostics CLIs đo process đang debug (hoặc PID bất kỳ): counters (CPU %, GC, alloc rate, threadpool), top hot methods (CPU sampling), top types chiếm heap.
 
-**Chuẩn bị:** cài CLIs một lần:
+**Chuẩn bị:** cài CLIs một lần — chạy **từng lệnh riêng**, không gộp nhiều tên gói vào một lệnh:
 ```powershell
 dotnet tool install -g dotnet-counters
 dotnet tool install -g dotnet-trace
