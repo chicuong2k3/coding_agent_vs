@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.21.6 - 2026-08-09
+
+### Fixes
+
+- **OpenCode could pin the pill on Connected forever after closing.** opencode can leave a background process alive after the TUI exits; the stub's 10s interval heartbeat kept running inside that survivor, so the freshness window never expired. The opencode stub no longer beats on an interval: one beat at plugin load (greens the pill early), then a beat per real activity (throttled to 5s) — steady-state presence is governed by the IDE WebSocket opencode attaches within seconds. Verified live: closing opencode now greys the pill in the same second (WS drop), exactly like Claude Code. omp keeps its interval+bye (no WS to lean on; its survivor-free single process is proven).
+
 ## 1.21.5 - 2026-08-09
 
 ### Changes

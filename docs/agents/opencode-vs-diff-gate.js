@@ -165,26 +165,32 @@ export const VsDiffGate = async () => {
   // Resolve once at plugin load; the port/token live for the whole VS process session.
   const bridge = await findBridge();
 
-  // Presence heartbeat: opencode may attach to the IDE WebSocket late (or not at all), which left
-  // the panel pill grey even though the session was live. Beat /agent-heartbeat every 10s so the
-  // extension greens "Connected" from plugin load; beats stopping (process exit) grey it within
-  // ~40s (30s TTL + 10s sweep on the bridge side).
-  if (bridge) {
-    const beat = () =>
-      fetch(`http://127.0.0.1:${bridge.port}/agent-heartbeat`, {
-        method: "POST",
-        headers: {
-          "x-claude-code-ide-authorization": bridge.token,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({ agent: "OpenCode" }),
-      }).catch(() => {});
-    beat();
-    setInterval(beat, 10_000).unref?.(); // unref: never keep the CLI process alive just to beat
-  }
+  // Presence heartbeat — deliberately NOT an interval. opencode can leave a background server
+  // process alive after the TUI closes; an interval beat from that survivor would keep the panel
+  // pill green forever. Instead: one beat at load (greens the pill before the WS attaches), then a
+  // beat per real activity (hooks below, throttled). Steady-state presence is governed by the IDE
+  // WebSocket, which opencode attaches within seconds - so closing it greys the pill instantly,
+  // exactly like Claude Code, and an idle survivor process goes quiet.
+  let lastBeat = 0;
+  const beat = () => {
+    if (!bridge) return;
+    const now = Date.now();
+    if (now - lastBeat < 5_000) return;
+    lastBeat = now;
+    fetch(`http://127.0.0.1:${bridge.port}/agent-heartbeat`, {
+      method: "POST",
+      headers: {
+        "x-claude-code-ide-authorization": bridge.token,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ agent: "OpenCode" }),
+    }).catch(() => {});
+  };
+  beat();
 
   return {
     "tool.execute.before": async (input, output) => {
+      beat(); // activity presence (throttled)
       // Only file-modifying tools can enter the diff; read-only tools pass straight through.
       if (input.tool !== "write" && input.tool !== "edit") return;
 
@@ -217,6 +223,7 @@ export const VsDiffGate = async () => {
     // part so the model sees runtime values alongside the prompt. Fail-open: any error or a
     // non-break mode injects nothing and the turn proceeds untouched.
     "chat.message": async (input, output) => {
+      beat(); // activity presence (throttled)
       if (!bridge || !output?.parts) return;
       const d = await debugContext(bridge);
       if (!d || d.mode !== "break") return;
@@ -228,6 +235,7 @@ export const VsDiffGate = async () => {
     // opencode actually emits - session.* and message.part.updated - and only act on idle.
     event: async ({ event }) => {
       if (!bridge || !event) return;
+      beat(); // activity presence (throttled)
       if (event.type === "session.idle") {
         await notify("OpenCode finished a turn and is waiting for you", bridge);
       }
