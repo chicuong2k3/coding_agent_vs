@@ -67,9 +67,11 @@ public sealed class AgentProfile
 
     /// <summary>
     /// True when the agent discovers and connects to the IDE WebSocket via a lockfile. False means the
-    /// IDE push channels (selection_changed / at_mentioned) are unavailable - but the diff gate and
-    /// turn-end toasts come back via the auto-deployed agent stub, and selection/attachments are
-    /// reachable as pull tools (vs_get_selection / vs_list_attachments) on the MCP servers.
+    /// live WS notifications (selection_changed / at_mentioned) don't flow - instead the auto-deployed
+    /// agent stub restores everything at prompt time: the diff gate, turn-end toasts, and a
+    /// before-each-turn /agent-context injection of break state + current selection + newly staged
+    /// attachments. Selection/attachments also stay reachable as pull tools (vs_get_selection /
+    /// vs_list_attachments).
     /// </summary>
     public bool SupportsIdeSocket => IdeDir != null;
 
@@ -138,9 +140,10 @@ public sealed class AgentProfile
     /// presents <c>x-claude-code-ide-authorization</c>, and speaks MCP <c>2025-11-25</c> - so it connects
     /// to our existing socket with no protocol work. It consumes the <c>selection_changed</c> and
     /// <c>at_mentioned</c> notifications. It has no shell-command hook system (its equivalent is a JS
-    /// plugin), so the diff gate + turn-end toasts ride the auto-deployed
-    /// <c>.opencode/plugins/vs-diff-gate.js</c> instead of hooks; only break-state context injection
-    /// stays off (no per-turn context hook). MCP registration uses opencode.json's own shape.
+    /// plugin), so the diff gate, turn-end toasts, AND break-state context injection (the plugin's
+    /// <c>chat.message</c> hook appends the live debugger state when VS is paused) all ride the
+    /// auto-deployed <c>.opencode/plugins/vs-diff-gate.js</c> instead of hooks. MCP registration uses
+    /// opencode.json's own shape.
     /// </summary>
     public static AgentProfile OpenCode { get; } = new(
         id: "opencode",
@@ -156,17 +159,18 @@ public sealed class AgentProfile
         mcpFormat: McpConfigFormat.OpenCodeMcp,
         supportsHooks: false,
         limitations: "OpenCode has no shell-command hook system, so the extension auto-deploys its "
-            + "JS plugin (`.opencode/plugins/vs-diff-gate.js`) on Launch: the Accept/Reject diff gate and "
-            + "turn-end notifications then work exactly like Claude Code's hooks. Break-state context "
-            + "injection stays off (opencode has no per-turn context hook). Selection, attachments, and "
-            + "the vs-debug / vs-semantic tools all work.");
+            + "JS plugin (`.opencode/plugins/vs-diff-gate.js`) on Launch: the Accept/Reject diff gate, "
+            + "turn-end notifications, and break-state context injection (live debugger state appended "
+            + "to your prompt while paused) all work exactly like Claude Code's hooks. Selection, "
+            + "attachments, and the vs-debug / vs-semantic tools all work.");
 
     /// <summary>
     /// Oh My Pi (`omp`). No lockfile, no IDE WebSocket - its editor integration is stdio (ACP / RPC),
     /// which our in-proc bridge can't host. What it DOES have is an MCP client that imports a workspace
     /// <c>.mcp.json</c>, so the whole pull surface (debugger, semantic, tests, capture) ports as-is,
-    /// and the auto-deployed <c>.omp/extensions/vs-diff-gate.ts</c> stub restores the diff gate +
-    /// turn-end toasts. The IDE push channels stay off - nothing is auto-injected into omp's context.
+    /// and the auto-deployed <c>.omp/extensions/vs-diff-gate.ts</c> stub restores the diff gate,
+    /// turn-end toasts, AND the push channels: its <c>before_agent_start</c> hook injects break state,
+    /// the current selection, and newly staged attachments via one <c>/agent-context</c> round trip.
     /// </summary>
     public static AgentProfile OhMyPi { get; } = new(
         id: "oh-my-pi",
@@ -180,11 +184,11 @@ public sealed class AgentProfile
         mcpConfigFileName: ".mcp.json",
         supportsHooks: false,
         limitations: "Oh My Pi connects over stdio (ACP/RPC), not the IDE WebSocket, so the extension "
-            + "auto-deploys a `.omp/extensions/vs-diff-gate.ts` stub on Launch: the diff gate and turn-end "
-            + "toasts are restored; selection and attachments are reachable as pull tools "
-            + "(vs_get_selection / vs_list_attachments) through its .mcp.json import. The IDE push "
-            + "channels stay off - nothing is auto-injected into omp's context. The vs-debug / "
-            + "vs-semantic MCP tools work via its .mcp.json import.");
+            + "auto-deploys a `.omp/extensions/vs-diff-gate.ts` stub on Launch: the diff gate, turn-end "
+            + "toasts, and the push channels are all restored - before each turn the stub injects the "
+            + "live break state, your current selection, and newly staged attachments. Selection and "
+            + "attachments also remain reachable as pull tools (vs_get_selection / vs_list_attachments). "
+            + "The vs-debug / vs-semantic MCP tools work via its .mcp.json import.");
 
     /// <summary>Every agent the extension can launch, in picker order. Claude Code is index 0 = default.</summary>
     public static IReadOnlyList<AgentProfile> All { get; } = new[] { ClaudeCode, OpenCode, OhMyPi };

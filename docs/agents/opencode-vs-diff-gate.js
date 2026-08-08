@@ -14,6 +14,12 @@
  * the bridge's /notify endpoint when the session goes idle — the same in-IDE "finished / needs
  * input" toast Claude Code users get from the Stop hook.
  *
+ * And it restores break-state context injection (Claude Code's UserPromptSubmit hook): the
+ * `chat.message` hook fires on each user message, POSTs the bridge's /debug-context endpoint,
+ * and when Visual Studio is paused at a breakpoint appends the live state — stop location, call
+ * stack, locals/arguments — as a synthetic text part, so the model debugs from runtime values
+ * without a tool call. No-op when not in break mode.
+ *
  * Install: drop this file into your project's plugin directory as
  *   .opencode/plugins/vs-diff-gate.js
  * (opencode auto-loads every .js/.ts in .opencode/plugins/ — no config change needed).
@@ -94,6 +100,45 @@ async function permission(filePath, newContents, bridge) {
   }
 }
 
+/** Live debugger snapshot: POST the bridge's /debug-context (same endpoint Claude Code's
+ *  UserPromptSubmit hook uses). Returns the parsed JSON, or null when unreachable. */
+async function debugContext(bridge) {
+  try {
+    const res = await fetch(`http://127.0.0.1:${bridge.port}/debug-context`, {
+      method: "POST",
+      headers: {
+        "x-claude-code-ide-authorization": bridge.token,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ cwd: process.cwd() }),
+    });
+    return await res.json();
+  } catch {
+    return null; // bridge unreachable -> inject nothing, never block the turn
+  }
+}
+
+/** Render the break-state snapshot exactly like vs-debug-context-hook.ps1 does for Claude Code. */
+function renderDebug(d) {
+  const lines = ["The Visual Studio debugger is paused at a breakpoint. Current runtime state:"];
+  if (d.stoppedAt) {
+    lines.push(`- Stopped at ${d.stoppedAt.file}:${d.stoppedAt.line} in ${d.stoppedAt.function}()`);
+  }
+  if (Array.isArray(d.callStack) && d.callStack.length) {
+    lines.push("- Call stack (innermost first):");
+    for (const fr of d.callStack) lines.push(`    ${fr.function}`);
+  }
+  if (Array.isArray(d.args) && d.args.length) {
+    lines.push("- Arguments (current frame):");
+    for (const a of d.args) lines.push(`    ${a.name} (${a.type}) = ${a.value}`);
+  }
+  if (Array.isArray(d.locals) && d.locals.length) {
+    lines.push("- Locals (current frame):");
+    for (const l of d.locals) lines.push(`    ${l.name} (${l.type}) = ${l.value}`);
+  }
+  return lines.join("\n");
+}
+
 /** Turn-end notification: POST {message} to the bridge's /notify endpoint (fire-and-forget). */
 async function notify(message, bridge) {
   try {
@@ -145,6 +190,17 @@ export const VsDiffGate = async () => {
         // surfaces to the model, mirroring Claude Code's deny + optional feedback.
         throw new Error(reason || `Edit rejected in Visual Studio diff`);
       }
+    },
+
+    // Break-state context injection (Claude Code's UserPromptSubmit equivalent): when VS is paused
+    // at a breakpoint as the user submits a message, append the live state as a synthetic text
+    // part so the model sees runtime values alongside the prompt. Fail-open: any error or a
+    // non-break mode injects nothing and the turn proceeds untouched.
+    "chat.message": async (input, output) => {
+      if (!bridge || !output?.parts) return;
+      const d = await debugContext(bridge);
+      if (!d || d.mode !== "break") return;
+      output.parts.push({ type: "text", text: renderDebug(d), synthetic: true });
     },
 
     // Turn-end notification: when the session goes idle (model finished, waiting for input),

@@ -155,6 +155,12 @@ internal sealed class BridgeHost : IDisposable
         // debugger (break location, call stack, locals) and hand it back to be injected into context.
         _server.DebugContextHandler = GetDebugContextAsync;
 
+        // Prompt-time push for non-WS agents: omp's stub POSTs /agent-context from before_agent_start
+        // and injects the result - the same break state as above, plus the current selection and any
+        // attachments staged since the last turn (which the WS path would have pushed as
+        // selection_changed / at_mentioned).
+        _server.AgentContextHandler = GetAgentContextAsync;
+
         // Debug PULL channel (Phase 2): a SECOND MCP server with its own registry of vs_* debug tools,
         // served at POST /mcp. The CLI reaches it through the stdio shim that McpInstaller registers in
         // .mcp.json - so the model can fetch live runtime state on demand mid-turn, not just at
@@ -346,6 +352,21 @@ internal sealed class BridgeHost : IDisposable
             Log.Warn($"debug-context read failed: {e.Message}");
             return "{\"mode\":\"unknown\"}";
         }
+    }
+
+    /// <summary>
+    /// One-round-trip prompt-time context for agents without the IDE WebSocket (POST /agent-context):
+    /// {debug, selection, attachments}. Each section fails independently and open - a busy debugger
+    /// read must not cost the agent its selection or attachments.
+    /// </summary>
+    private async Task<string> GetAgentContextAsync(CancellationToken ct)
+    {
+        var o = new Newtonsoft.Json.Linq.JObject();
+        try { o["debug"] = Newtonsoft.Json.Linq.JObject.Parse(await GetDebugContextAsync(ct)); }
+        catch { o["debug"] = new Newtonsoft.Json.Linq.JObject { ["mode"] = "unknown" }; }
+        try { o["selection"] = Editor.SelectionService.CurrentAsJson(); } catch { }
+        try { o["attachments"] = Attachments.AttachmentService.TakeUndelivered(); } catch { }
+        return o.ToString(Newtonsoft.Json.Formatting.None);
     }
 
     /// <summary>

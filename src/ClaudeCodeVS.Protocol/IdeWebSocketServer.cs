@@ -77,6 +77,14 @@ public sealed class IdeWebSocketServer
     public Func<CancellationToken, Task<string>>? DebugContextHandler { get; set; }
 
     /// <summary>
+    /// Handles a POST /agent-context request from a per-agent stub's prompt-time hook (omp's
+    /// before_agent_start): one round trip returning {debug, selection, attachments} JSON so agents
+    /// WITHOUT the IDE WebSocket still get the push channels - break state, current selection, and
+    /// newly staged attachments - injected at prompt time. Set by the VSIX; null returns "{}".
+    /// </summary>
+    public Func<CancellationToken, Task<string>>? AgentContextHandler { get; set; }
+
+    /// <summary>
     /// Secondary MCP surface for the Phase 2 debug PULL channel (POST /mcp). The CLI launches a tiny
     /// stdio shim as a normal MCP server; the shim forwards each JSON-RPC message here over HTTP, so the
     /// model can call vs_debug_state / vs_list_breakpoints / vs_get_frame_locals / vs_evaluate on demand.
@@ -182,6 +190,12 @@ public sealed class IdeWebSocketServer
                 && ctx.Request.Url?.AbsolutePath == "/debug-context")
             {
                 await HandleDebugContextRequestAsync(ctx, ct);
+                return;
+            }
+            if (string.Equals(ctx.Request.HttpMethod, "POST", StringComparison.OrdinalIgnoreCase)
+                && ctx.Request.Url?.AbsolutePath == "/agent-context")
+            {
+                await HandleAgentContextRequestAsync(ctx, ct);
                 return;
             }
             if (string.Equals(ctx.Request.HttpMethod, "POST", StringComparison.OrdinalIgnoreCase)
@@ -362,6 +376,36 @@ public sealed class IdeWebSocketServer
             var bytes = Encoding.UTF8.GetBytes(json);
             ctx.Response.StatusCode = 200;
             ctx.Response.ContentType = "application/json; charset=utf-8"; // no charset -> PS 5.1 clients decode as Latin-1 (mojibake)
+            ctx.Response.ContentLength64 = bytes.Length;
+            await ctx.Response.OutputStream.WriteAsync(bytes, 0, bytes.Length, ct);
+            ctx.Response.Close();
+        }
+        catch { /* client gave up */ }
+    }
+
+    private async Task HandleAgentContextRequestAsync(HttpListenerContext ctx, CancellationToken ct)
+    {
+        string json = "{}"; // fail-safe: the stub injects nothing on an empty object
+        try
+        {
+            // The body (cwd) is unused - the bridge reads its own VS instance - but drain the stream.
+            using (var reader = new StreamReader(ctx.Request.InputStream, Encoding.UTF8))
+                await reader.ReadToEndAsync();
+
+            var handler = AgentContextHandler;
+            if (handler != null)
+                json = await handler(ct) ?? json;
+        }
+        catch (Exception e)
+        {
+            Log.Warn($"agent-context request failed: {e.Message}");
+        }
+
+        try
+        {
+            var bytes = Encoding.UTF8.GetBytes(json);
+            ctx.Response.StatusCode = 200;
+            ctx.Response.ContentType = "application/json; charset=utf-8"; // charset: see debug-context
             ctx.Response.ContentLength64 = bytes.Length;
             await ctx.Response.OutputStream.WriteAsync(bytes, 0, bytes.Length, ct);
             ctx.Response.Close();

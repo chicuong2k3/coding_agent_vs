@@ -285,6 +285,33 @@ internal static class AttachmentService
         Changed?.Invoke();
     }
 
+    /// <summary>
+    /// Pull-side flush for agents WITHOUT the IDE WebSocket (omp's /agent-context prompt-time hook):
+    /// return every not-yet-delivered attachment and mark it Sent, exactly like the at_mentioned
+    /// flush does for WS agents - each staged file is announced once, then lives on as a tray chip
+    /// (click = re-mention still works for the WS path; omp re-reads by path).
+    /// </summary>
+    public static JArray TakeUndelivered()
+    {
+        var arr = new JArray();
+        foreach (var item in Snapshot().Where(i => !i.Sent))
+        {
+            arr.Add(new JObject
+            {
+                ["mentionPath"] = item.MentionPath,
+                ["path"] = item.FullPath,
+                ["fileName"] = item.FileName,
+                ["isImage"] = item.IsImage,
+                ["estTokens"] = item.EstTokens,
+                ["needsTool"] = item.NeedsTool,
+            });
+            item.Sent = true;
+            Log.Info($"attach: delivered '{item.MentionPath}'{TokSuffix(item.EstTokens)} via /agent-context.");
+        }
+        if (arr.Count > 0) Changed?.Invoke();
+        return arr;
+    }
+
     /// <summary>On CLI (re)connect: give the MCP handshake a beat to settle, then send whatever's pending.</summary>
     private static async Task FlushUnsentAsync()
     {

@@ -193,8 +193,8 @@ The `IIdeTool` / `McpServer` / tool implementations remain untouched — they're
 | Agent | Profile | Channels | Diff gate |
 |---|---|---|---|
 | Claude Code | `AgentProfile.ClaudeCode` | WS IDE + hooks + .mcp.json | ✅ PreToolUse hook → native VS diff |
-| OpenCode | `AgentProfile.OpenCode` | WS IDE (same lockfile/header/MCP 2025-11-25) + opencode.json MCP | ✅ Auto-deployed plugin — `.opencode/plugins/vs-diff-gate.js` written on Launch (diff gate + turn-end toasts) |
-| Oh My Pi (`omp`) | `AgentProfile.OhMyPi` | .mcp.json MCP import only (stdio, no WS) | ✅ Auto-deployed extension — `.omp/extensions/vs-diff-gate.ts` written on Launch (diff gate + turn-end toasts; selection/attachments as pull tools `vs_get_selection` / `vs_list_attachments`) |
+| OpenCode | `AgentProfile.OpenCode` | WS IDE (same lockfile/header/MCP 2025-11-25) + opencode.json MCP | ✅ Auto-deployed plugin — `.opencode/plugins/vs-diff-gate.js` written on Launch (diff gate + turn-end toasts + break-state injection via its `chat.message` hook → `/debug-context`) |
+| Oh My Pi (`omp`) | `AgentProfile.OhMyPi` | .mcp.json MCP import only (stdio, no WS) | ✅ Auto-deployed extension — `.omp/extensions/vs-diff-gate.ts` written on Launch (diff gate + turn-end toasts + prompt-time push: `before_agent_start` → `/agent-context` injects break state, current selection, and newly staged attachments; selection/attachments also as pull tools `vs_get_selection` / `vs_list_attachments`) |
 
 Deliberately NOT abstracted (wait for a real second agent's hook/transport contract): the hook event names + ps1 script contract and the `.mcp.json` entry format — each is either the shared IDE-protocol contract itself or gated off by the capability flags.
 

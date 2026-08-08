@@ -14,6 +14,13 @@
  * omp is waiting on you — we POST the bridge's /notify endpoint, the same in-IDE toast Claude
  * Code users get from the Stop hook.
  *
+ * And it restores the IDE push channels at prompt time: `before_agent_start` POSTs the bridge's
+ * /agent-context endpoint (one round trip: {debug, selection, attachments}) and injects a hidden
+ * context message carrying whatever is live — the debugger's break state (stop location, call
+ * stack, locals — Claude Code's UserPromptSubmit hook), the user's current editor selection
+ * (the selection_changed channel), and any attachments staged since the last turn (the
+ * at_mentioned channel; omp reads them by path). Sections that are empty inject nothing.
+ *
  * Install: drop this file into your agent (or project) extensions directory and restart omp
  *   ~/.omp/extensions/vs-diff-gate.js     (user-wide)
  *   <cwd>/.omp/extensions/vs-diff-gate.js / <cwd>/.pi/extensions/ (per-project)
@@ -104,6 +111,61 @@ async function permission(filePath: string, newContents: string, bridge: { port:
   }
 }
 
+interface AgentContext {
+  debug?: {
+    mode?: string;
+    stoppedAt?: { file?: string; line?: number; function?: string };
+    callStack?: { function?: string }[];
+    args?: { name?: string; type?: string; value?: string }[];
+    locals?: { name?: string; type?: string; value?: string }[];
+  };
+  selection?: {
+    text?: string;
+    filePath?: string | null;
+    selection?: { start?: { line: number }; end?: { line: number } };
+  };
+  attachments?: { path?: string; fileName?: string; estTokens?: number | null; needsTool?: boolean }[];
+}
+
+/** Prompt-time IDE context: POST the bridge's /agent-context (one round trip for all three push
+ *  channels). Returns the parsed JSON, or null when unreachable. */
+async function agentContext(bridge: { port: number; token: string }): Promise<AgentContext | null> {
+  try {
+    const res = await fetch(`http://127.0.0.1:${bridge.port}/agent-context`, {
+      method: "POST",
+      headers: {
+        "x-claude-code-ide-authorization": bridge.token,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ cwd: process.cwd() }),
+    });
+    return (await res.json()) as AgentContext;
+  } catch {
+    return null; // bridge unreachable -> inject nothing, never block the turn
+  }
+}
+
+/** Render the break-state snapshot exactly like vs-debug-context-hook.ps1 does for Claude Code. */
+function renderDebug(d: NonNullable<AgentContext["debug"]>): string {
+  const lines = ["The Visual Studio debugger is paused at a breakpoint. Current runtime state:"];
+  if (d.stoppedAt) {
+    lines.push(`- Stopped at ${d.stoppedAt.file}:${d.stoppedAt.line} in ${d.stoppedAt.function}()`);
+  }
+  if (d.callStack?.length) {
+    lines.push("- Call stack (innermost first):");
+    for (const fr of d.callStack) lines.push(`    ${fr.function}`);
+  }
+  if (d.args?.length) {
+    lines.push("- Arguments (current frame):");
+    for (const a of d.args) lines.push(`    ${a.name} (${a.type}) = ${a.value}`);
+  }
+  if (d.locals?.length) {
+    lines.push("- Locals (current frame):");
+    for (const l of d.locals) lines.push(`    ${l.name} (${l.type}) = ${l.value}`);
+  }
+  return lines.join("\n");
+}
+
 /** Turn-end notification: POST {message} to the bridge's /notify endpoint (fire-and-forget). */
 async function notify(message: string, bridge: { port: number; token: string }): Promise<void> {
   try {
@@ -162,6 +224,40 @@ export default async function vsDiffGate(pi: ExtensionAPI) {
       return { block: true, reason: reason ?? "Edit rejected in Visual Studio diff" };
     }
   });
+
+  // Prompt-time IDE context (the push channels, restored): before each agent turn, fetch
+  // {debug, selection, attachments} in one round trip and inject whatever is live as a hidden
+  // context message. before_agent_start handlers may return { message } (docs/extensions.md);
+  // display:false keeps it out of the transcript UI while the model still sees it.
+  (pi.on as (ev: string, h: (ev2: unknown, ctx?: unknown) => unknown) => void)(
+    "before_agent_start", async () => {
+      if (!bridge) return;
+      const ide = await agentContext(bridge);
+      if (!ide) return;
+
+      const sections: string[] = [];
+      if (ide.debug?.mode === "break") sections.push(renderDebug(ide.debug));
+
+      const sel = ide.selection;
+      if (sel?.text && sel.filePath) {
+        // 1-based lines for humans/models; cap the text like every other bridge read.
+        const start = (sel.selection?.start?.line ?? 0) + 1;
+        const end = (sel.selection?.end?.line ?? 0) + 1;
+        const text = sel.text.length > 2000 ? sel.text.slice(0, 2000) + "\n[truncated]" : sel.text;
+        sections.push(`The user's current selection in Visual Studio (${sel.filePath}:${start}-${end}):\n${text}`);
+      }
+
+      if (ide.attachments?.length) {
+        const list = ide.attachments
+          .map((a) => `    ${a.path}${a.needsTool ? " (needs a tool/script to parse)" : ""}`)
+          .join("\n");
+        sections.push(`The user staged these files in the Visual Studio attachment tray - read them by path:\n${list}`);
+      }
+
+      if (!sections.length) return;
+      return { message: { customType: "vs-ide-context", content: sections.join("\n\n"), display: false } };
+    },
+  );
 
   // Turn-end toast: POST the bridge's /notify endpoint when omp finishes a turn and waits for
   // the user. Throttled to one toast per 60s so long agent runs don't toast-spam.

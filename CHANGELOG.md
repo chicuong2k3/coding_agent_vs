@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.20.0 - 2026-08-09
+
+**Multi-agent parity** — the last two per-agent gaps close; OpenCode and Oh My Pi now match Claude Code's context channels.
+
+### Features
+
+- **OpenCode: break-state context injection.** The auto-deployed plugin gains a `chat.message` hook: on each user message it POSTs the bridge's existing `/debug-context` endpoint and, when Visual Studio is paused at a breakpoint, appends the live state (stop location, call stack, locals/arguments) as a synthetic text part — the exact equivalent of Claude Code's `UserPromptSubmit` hook. No-op when not in break mode; fail-open on any error.
+- **Oh My Pi: the IDE push channels, restored at prompt time.** A new bridge endpoint `POST /agent-context` returns `{debug, selection, attachments}` in one round trip; the auto-deployed omp stub calls it from `before_agent_start` and injects a hidden context message (`display:false`) carrying whatever is live: the debugger's break state, the user's current editor selection (the `selection_changed` channel), and attachments staged since the last turn (the `at_mentioned` channel — `AttachmentService.TakeUndelivered()` marks them Sent, same semantics as the WS flush). Empty sections inject nothing; each bridge section fails independently and open.
+
 ## 1.19.0 - 2026-08-09
 
 **Multi-agent** — the panel's Agent picker launches a second agent through the same bridge. Full analysis: [`docs/MULTI-AGENT.md`](docs/MULTI-AGENT.md).
