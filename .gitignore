@@ -6,6 +6,10 @@ obj/
 .vs/
 .claude/
 .mcp.json
+
+# opencode runtime (shim + MCP config written by the extension on Launch; same class as .claude/)
+.opencode/
+opencode.json
 *.user
 *.suo
 *.userprefs

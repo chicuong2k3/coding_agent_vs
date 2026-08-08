@@ -152,10 +152,11 @@ public sealed class AgentProfile
         mcpConfigFileName: "opencode.json",
         mcpFormat: McpConfigFormat.OpenCodeMcp,
         supportsHooks: false,
-        limitations: "OpenCode has no shell-command hook system, so the Accept/Reject diff gate, "
-            + "turn-end notifications, and break-state context injection are off - edits apply directly. "
-            + "Selection, attachments, and the vs-debug / vs-semantic tools all work. "
-            + "See docs/agents/opencode-vs-diff-gate.js for an opt-in plugin that restores the diff gate.");
+        limitations: "OpenCode has no shell-command hook system, so the extension auto-deploys its "
+            + "JS plugin (`.opencode/plugins/vs-diff-gate.js`) on Launch: the Accept/Reject diff gate and "
+            + "turn-end notifications then work exactly like Claude Code's hooks. Break-state context "
+            + "injection stays off (opencode has no per-turn context hook). Selection, attachments, and "
+            + "the vs-debug / vs-semantic tools all work.");
 
     /// <summary>
     /// Oh My Pi (`omp`). No lockfile, no IDE WebSocket - its editor integration is stdio (ACP / RPC),
@@ -173,10 +174,12 @@ public sealed class AgentProfile
         // omp imports a workspace .mcp.json alongside its native .omp/mcp.json, so the Claude shape works.
         mcpConfigFileName: ".mcp.json",
         supportsHooks: false,
-        limitations: "Oh My Pi connects over stdio (ACP/RPC), not the IDE WebSocket, so the diff gate, "
-            + "selection push, attachments, and notifications are unavailable. The vs-debug / vs-semantic "
-            + "MCP tools work via its .mcp.json import. "
-            + "See docs/agents/omp-vs-diff-gate.ts for an opt-in hook that restores the diff gate.");
+        limitations: "Oh My Pi connects over stdio (ACP/RPC), not the IDE WebSocket, so the extension "
+            + "auto-deploys a `.omp/extensions/vs-diff-gate.ts` stub on Launch: the diff gate and turn-end "
+            + "toasts are restored; selection and attachments are reachable as pull tools "
+            + "(vs_get_selection / vs_list_attachments) through its .mcp.json import. The IDE push "
+            + "channels stay off - nothing is auto-injected into omp's context. The vs-debug / "
+            + "vs-semantic MCP tools work via its .mcp.json import.");
 
     /// <summary>Every agent the extension can launch, in picker order. Claude Code is index 0 = default.</summary>
     public static IReadOnlyList<AgentProfile> All { get; } = new[] { ClaudeCode, OpenCode, OhMyPi };

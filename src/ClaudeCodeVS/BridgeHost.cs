@@ -515,6 +515,7 @@ internal sealed class BridgeHost : IDisposable
     private static IEnumerable<IIdeTool> BuildSemanticTools()
     {
         yield return new VsGetSelectionTool();         // editor selection/caret -> text + symbolId at it
+        yield return new VsListAttachmentsTool();      // the staged attachment tray as a pull list (omp etc.)
         yield return new VsDecompileTool();            // framework/NuGet metadata symbol -> decompiled C#
         yield return new VsSearchSymbolsTool();        // name -> symbolId (addressing primitive)
         yield return new VsFindReferencesTool();       // semantic find-all-references
@@ -580,11 +581,13 @@ internal sealed class BridgeHost : IDisposable
 
         // Auto-install the single-gate PreToolUse hook into the workspace so accepting/rejecting our
         // diff is the sole edit gate (no terminal prompt). Best-effort; idempotent; safe to re-run.
-        // Also register the debug PULL MCP server (.mcp.json + stdio shim) for Phase 2 pull-on-demand.
+        // Also register the debug PULL MCP server (.mcp.json + stdio shim) for Phase 2 pull-on-demand,
+        // and auto-deploy the per-agent diff-gate stub (opencode/omp only - Claude needs neither).
         if (!string.IsNullOrEmpty(workspace))
         {
             Hooks.PermissionHookInstaller.EnsureInstalled(workspace!, agent);
             Hooks.McpInstaller.EnsureInstalled(workspace!, agent);
+            Hooks.AgentStubInstaller.EnsureInstalled(workspace!, agent);
         }
 
         // Prefer VS's own native Terminal tool window (undocumented, no NuGet package - see

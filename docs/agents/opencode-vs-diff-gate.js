@@ -1,6 +1,7 @@
 /**
- * opencode-vs-diff-gate.js — opt-in Accept/Reject diff gate for OpenCode behind Claude Code
- * for Visual Studio (docs/MULTI-AGENT.md).
+ * opencode-vs-diff-gate.js — Accept/Reject diff gate + turn-end notifications for OpenCode behind
+ * Claude Code for Visual Studio (docs/MULTI-AGENT.md). Auto-installed by the extension into
+ * `.opencode/plugins/` when you Launch OpenCode from the panel; copy it there manually too.
  *
  * OpenCode has no shell-command hook system, so the extension's single-gate edit review
  * (PreToolUse -> POST /permission -> native VS diff) is OFF by default: edits apply directly.
@@ -9,13 +10,16 @@
  * bridge's /permission endpoint, and `throw` (opencode's veto mechanism) when the user rejected
  * the change in the VS diff — exactly what the PreToolUse hook does for Claude Code.
  *
- * Install: copy (or symlink) this file into your project's plugin directory as
+ * It also restores the turn-end notification: the `event` hook watches session state and POSTs
+ * the bridge's /notify endpoint when the session goes idle — the same in-IDE "finished / needs
+ * input" toast Claude Code users get from the Stop hook.
+ *
+ * Install: drop this file into your project's plugin directory as
  *   .opencode/plugins/vs-diff-gate.js
  * (opencode auto-loads every .js/.ts in .opencode/plugins/ — no config change needed).
  *
- * Works out of the box with the bridge running (the "Claude Code" panel, any agent — Launch
- * OpenCode from the panel picker). Requires Node's builtin `node:fs`/`node:net` only; no npm
- * packages.
+ * Works out of the box with the bridge running (the "Agent" panel, any agent — Launch OpenCode
+ * from the panel picker). Requires Node's builtin `node:fs`/`node:net` only; no npm packages.
  */
 
 import { readdirSync, readFileSync, existsSync } from "node:fs";
@@ -90,6 +94,22 @@ async function permission(filePath, newContents, bridge) {
   }
 }
 
+/** Turn-end notification: POST {message} to the bridge's /notify endpoint (fire-and-forget). */
+async function notify(message, bridge) {
+  try {
+    await fetch(`http://127.0.0.1:${bridge.port}/notify`, {
+      method: "POST",
+      headers: {
+        "x-claude-code-ide-authorization": bridge.token,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ message }),
+    });
+  } catch {
+    /* best-effort - a busy bridge must never break opencode */
+  }
+}
+
 /**
  * Plugin entry: returns the hook set. opencode calls this function per session with the
  * { project, client, $, directory, worktree } context.
@@ -124,6 +144,16 @@ export const VsDiffGate = async () => {
         // Throwing is opencode's documented veto: the tool call is aborted and the message
         // surfaces to the model, mirroring Claude Code's deny + optional feedback.
         throw new Error(reason || `Edit rejected in Visual Studio diff`);
+      }
+    },
+
+    // Turn-end notification: when the session goes idle (model finished, waiting for input),
+    // raise the same in-IDE toast the Stop hook gives Claude Code users. Filter to the events
+    // opencode actually emits - session.* and message.part.updated - and only act on idle.
+    event: async ({ event }) => {
+      if (!bridge || !event) return;
+      if (event.type === "session.idle") {
+        await notify("OpenCode finished a turn and is waiting for you", bridge);
       }
     },
   };

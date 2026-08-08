@@ -87,6 +87,10 @@
     <EmbeddedResource Include="Hooks\vs-notify-hook.ps1" />
     <!-- Phase 2 debug PULL channel: the stdio MCP shim, registered in .mcp.json (see McpInstaller). -->
     <EmbeddedResource Include="Hooks\vs-mcp-shim.ps1" />
+    <!-- Agent diff-gate/no:shot stubs, embedded so the extension can auto-deploy them into an
+         agent's plugin/extensions folder on Launch (opencode: .opencode/plugins/, omp: .omp/extensions/). -->
+    <EmbeddedResource Include="..\..\docs\agents\opencode-vs-diff-gate.js" Link="Hooks\opencode-vs-diff-gate.js" />
+    <EmbeddedResource Include="..\..\docs\agents\omp-vs-diff-gate.ts" Link="Hooks\omp-vs-diff-gate.ts" />
   </ItemGroup>
   <ItemGroup>
     <!-- Compiled into the Menus.ctmenu resource referenced by [ProvideMenuResource]. -->

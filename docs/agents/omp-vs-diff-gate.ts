@@ -1,6 +1,7 @@
 /**
- * omp-vs-diff-gate.ts — opt-in Accept/Reject diff gate for Oh My Pi (omp) behind Claude Code
- * for Visual Studio (docs/MULTI-AGENT.md).
+ * omp-vs-diff-gate.ts — diff gate + turn-end notifications for Oh My Pi (omp) behind Claude Code
+ * for Visual Studio (docs/MULTI-AGENT.md). Auto-installed by the extension into your project's
+ * extensions dir when you Launch Oh My Pi from the panel; drop it there manually too.
  *
  * omp has no IDE WebSocket and no shell-command hook system, so the extension's single-gate edit
  * review is OFF by default: edits apply directly through omp's own approval policy. This extension
@@ -9,12 +10,16 @@
  * and return `{ block: true, reason }` when the user rejected the change in the VS diff — the
  * omp equivalent of Claude Code's PreToolUse hook.
  *
+ * It also restores the turn-end notification: `turn_end` fires when the model finishes a turn and
+ * omp is waiting on you — we POST the bridge's /notify endpoint, the same in-IDE toast Claude
+ * Code users get from the Stop hook.
+ *
  * Install: drop this file into your agent (or project) extensions directory and restart omp
- *   ~/.omp/agent/extensions/vs-diff-gate.ts     (user-wide)
- *   <cwd>/.omp/extensions/vs-diff-gate.ts      (per-project)
+ *   ~/.omp/extensions/vs-diff-gate.js     (user-wide)
+ *   <cwd>/.omp/extensions/vs-diff-gate.js / <cwd>/.pi/extensions/ (per-project)
  * (see https://github.com/can1357/oh-my-pi/blob/main/docs/skills/authoring-extensions.md)
  *
- * Works out of the box with the bridge running (the "Claude Code" panel, any agent). Uses only
+ * Works out of the box with the bridge running (the "Agent" panel, any agent). Uses only
  * Node builtins — no npm packages.
  *
  * Note omp's own permission system stays in front of this; the VS diff is an ADDITIONAL review
@@ -33,23 +38,27 @@ import type { ExtensionAPI } from "@oh-my-pi/pi-coding-agent";
  * prefer (longest prefix) matching the current working directory, probe each candidate's port,
  * and return the first that is actually listening. omp reads the SAME shared lockfile contract.
  */
-async function findBridge() {
+async function findBridge(): Promise<{ port: number; token: string } | null> {
   const ideDir = join(homedir(), ".claude", "ide");
   if (!existsSync(ideDir)) return null;
 
   const cwd = process.cwd();
   const candidates = readdirSync(ideDir)
     .filter((f) => f.endsWith(".lock"))
-    .map((f) => {
+    .map((f): { port: number; token: string; workspace?: string } | null => {
       try {
-        const doc = JSON.parse(readFileSync(join(ideDir, f), "utf8"));
+        const doc = JSON.parse(readFileSync(join(ideDir, f), "utf8")) as {
+          port: number;
+          authToken: string;
+          workspaceFolders?: string[];
+        };
         return { port: doc.port, token: doc.authToken, workspace: doc.workspaceFolders?.[0] };
       } catch {
         return null;
       }
     })
-    .filter((c) => c && c.token)
-    // Prefer the lockfile whose workspace folder is the longest prefix of our cwd.
+    .filter((c): c is { port: number; token: string; workspace?: string } => !!c && !!c.token)
+    // Prefer the workspace root that is the longest prefix of our cwd.
     .sort(
       (a, b) =>
         prefixLen(b.workspace, cwd) - prefixLen(a.workspace, cwd) ||
@@ -88,16 +97,37 @@ async function permission(filePath: string, newContents: string, bridge: { port:
       },
       body: JSON.stringify({ filePath, newContents }),
     });
-    const json = await res.json();
-    return { allow: json.allow === true, reason: json.reason };
+    const json = (await res.json()) as { allow?: unknown; reason?: unknown };
+    return { allow: json.allow === true, reason: typeof json.reason === "string" ? json.reason : null };
   } catch {
     return { allow: true, reason: null }; // bridge unreachable -> fail-open, never block the agent
   }
 }
 
-export default function vsDiffGate(pi: ExtensionAPI) {
-  // Resolve once at load; the port/token live for the whole VS process session.
-  const bridge = findBridge();
+/** Turn-end notification: POST {message} to the bridge's /notify endpoint (fire-and-forget). */
+async function notify(message: string, bridge: { port: number; token: string }): Promise<void> {
+  try {
+    await fetch(`http://127.0.0.1:${bridge.port}/notify`, {
+      method: "POST",
+      headers: {
+        "x-claude-code-ide-authorization": bridge.token,
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({ message }),
+    });
+  } catch {
+    /* best-effort - a busy bridge must never break omp */
+  }
+}
+
+export default async function vsDiffGate(pi: ExtensionAPI) {
+  // Resolve once at load; the port/token live for the whole VS process session. The factory
+  // async is fine - omp/pi awaits it before startup completes (docs: async factory functions).
+  const bridge = await findBridge();
+
+  // Throttle turn-end toasts: a "turn" ends on every model reply, but we only want the toast
+  // when omp actually hands control back to the user (which may be several turns later).
+  let lastToast = 0;
 
   pi.on("tool_call", async (event) => {
     // Only file-modifying tools can enter the diff; read-only tools pass straight through.
@@ -105,7 +135,7 @@ export default function vsDiffGate(pi: ExtensionAPI) {
 
     const input = event.input as Record<string, unknown> | undefined;
     const filePath = typeof input?.filePath === "string" ? input.filePath : "";
-    if (!filePath || !bridge) return; // no bridge to review with -> let omp work normally
+    if (!input || !filePath || !bridge) return; // no bridge to review with -> let omp work normally
 
     let newContents: string | undefined;
     if (event.toolName === "write") {
@@ -132,4 +162,16 @@ export default function vsDiffGate(pi: ExtensionAPI) {
       return { block: true, reason: reason ?? "Edit rejected in Visual Studio diff" };
     }
   });
+
+  // Turn-end toast: POST the bridge's /notify endpoint when omp finishes a turn and waits for
+  // the user. Throttled to one toast per 60s so long agent runs don't toast-spam.
+  (pi.on as (ev: string, h: (args: unknown) => void | Promise<void>) => void)(
+    "turn_end", async () => {
+      if (!bridge) return;
+      const now = Date.now();
+      if (now - lastToast < 60_000) return;
+      lastToast = now;
+      await notify("Oh My Pi finished a turn and is waiting for you", bridge);
+    },
+  );
 }

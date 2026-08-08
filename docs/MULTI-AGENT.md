@@ -193,8 +193,8 @@ The `IIdeTool` / `McpServer` / tool implementations remain untouched — they're
 | Agent | Profile | Channels | Diff gate |
 |---|---|---|---|
 | Claude Code | `AgentProfile.ClaudeCode` | WS IDE + hooks + .mcp.json | ✅ PreToolUse hook → native VS diff |
-| OpenCode | `AgentProfile.OpenCode` | WS IDE (same lockfile/header/MCP 2025-11-25) + opencode.json MCP | ⚙️ OFF — opt-in `docs/agents/opencode-vs-diff-gate.js` plugin |
-| Oh My Pi (`omp`) | `AgentProfile.OhMyPi` | .mcp.json MCP import only (stdio, no WS) | ⚙️ OFF — opt-in `docs/agents/omp-vs-diff-gate.ts` extension |
+| OpenCode | `AgentProfile.OpenCode` | WS IDE (same lockfile/header/MCP 2025-11-25) + opencode.json MCP | ✅ Auto-deployed plugin — `.opencode/plugins/vs-diff-gate.js` written on Launch (diff gate + turn-end toasts) |
+| Oh My Pi (`omp`) | `AgentProfile.OhMyPi` | .mcp.json MCP import only (stdio, no WS) | ✅ Auto-deployed extension — `.omp/extensions/vs-diff-gate.ts` written on Launch (diff gate + turn-end toasts; selection/attachments as pull tools `vs_get_selection` / `vs_list_attachments`) |
 
 Deliberately NOT abstracted (wait for a real second agent's hook/transport contract): the hook event names + ps1 script contract and the `.mcp.json` entry format — each is either the shared IDE-protocol contract itself or gated off by the capability flags.
 
@@ -222,7 +222,7 @@ The lockfile JSON schema (`pid`, `pidStartTime`, `workspaceFolders`, `ideName`, 
 2. **View > Other Windows > Claude Code** (also on Tools menu)
 3. Pick the agent from the panel's **Agent** dropdown (persisted across restarts), then click **Launch** — the CLI opens in VS's docked Terminal window, auto-connected
 4. The panel pill turns green: **Connected**. No `/ide` needed.
-5. Ask the agent to make a change — Claude Code edits open as native VS diffs; OpenCode/omp edits apply directly (diff gate is opt-in, see the `docs/agents/` stubs)
+5. Ask the agent to make a change — Claude Code edits open as native VS diffs; OpenCode/omp edits go through the auto-deployed `docs/agents/` stub plugins (same VS diff), each auto-written into the agent's plugin dir on Launch
 
 ### Panel Controls
 
