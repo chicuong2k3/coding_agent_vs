@@ -149,6 +149,9 @@ internal sealed class BridgeHost : IDisposable
                 return;
             }
             _lastBeatUtc = DateTime.UtcNow;
+            // Event level: visible in the Output pane (not the panel feed) - the diagnostic for
+            // "who is keeping the pill green" is the beat timeline.
+            Log.Event($"agent heartbeat: {agent}");
             if (!Ui.BridgeStatus.Connected)
             {
                 Log.Info($"agent heartbeat: {agent} is alive -> connected");
@@ -422,6 +425,10 @@ internal sealed class BridgeHost : IDisposable
                     {
                         Hooks.PermissionHookInstaller.EnsureInstalled(ws!, agent);
                         Hooks.McpInstaller.EnsureInstalled(ws!, agent);
+                        // Stub freshness must not depend on the Launch button: a manually-launched
+                        // agent (or one launched while another was selected) must still get the
+                        // current stub - a stale one can pin the pill (the old interval heartbeat).
+                        Hooks.AgentStubInstaller.EnsureInstalled(ws!, agent);
                     }
                 }
             }

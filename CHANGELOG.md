@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.21.7 - 2026-08-09
+
+### Fixes
+
+- **Stale stubs could outlive a stub fix.** The per-agent stubs were only (re)written by the panel's Launch button for the selected agent, so a manually-launched agent — or one launched while a different agent was selected — kept whatever stub was already in the workspace. Since the 1.21.6 opencode fix lives in the stub, a stale copy kept the old interval heartbeat and could pin the pill. Stubs for ALL agents are now refreshed by install-on-connect too (any WS attach or first heartbeat), same as the hooks and MCP config. Takes effect from the NEXT agent restart after the refresh.
+- Each heartbeat is now logged at Event level (Output pane) so "who is keeping the pill green" is diagnosable from the beat timeline.
+
 ## 1.21.6 - 2026-08-09
 
 ### Fixes
