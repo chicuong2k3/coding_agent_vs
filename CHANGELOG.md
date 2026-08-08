@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.21.3 - 2026-08-09
+
+### Fixes
+
+- **OpenCode / Oh My Pi launched into a blank white terminal.** Both are full-screen (alternate-buffer) TUIs, which VS's native Terminal tool window renders as an empty screen — Claude Code's inline TUI is unaffected. Verified the CLIs and the deployed stubs are healthy (both answer headlessly with the stub loaded); the failure is the rendering surface. New `AgentProfile.PreferExternalConsole` (set for both) sends Launch straight to the external cmd.exe console — the same window the "External console" button uses — where their TUIs work.
+- **Limitations banner removed for OpenCode and Oh My Pi.** With the diff gate, notifications, break-state injection, and the push channels all restored by the auto-deployed stubs, nothing is lost relative to Claude Code — `Limitations` is null again and the panel banner no longer shows.
+
 ## 1.21.2 - 2026-08-09
 
 ### Fixes

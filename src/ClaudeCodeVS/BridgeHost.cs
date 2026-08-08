@@ -664,7 +664,11 @@ internal sealed class BridgeHost : IDisposable
         // Prefer VS's own native Terminal tool window (undocumented, no NuGet package - see
         // Terminal/VsTerminalLauncher.cs). TryLaunchAsync never throws; on ANY failure it logs via
         // Log.Warn and returns false, so the external cmd.exe console below is always the safety net.
-        if (!forceExternal &&
+        // Agents with PreferExternalConsole (opencode/omp: full-screen TUIs that render blank in the
+        // native terminal) skip straight to the external console.
+        if (agent.PreferExternalConsole && !forceExternal)
+            Log.Info($"{agent.DisplayName}: full-screen TUI - launching in the external console.");
+        else if (!forceExternal &&
             await Terminal.VsTerminalLauncher.TryLaunchAsync(workspace, _lockfile.Port, agent, _cts.Token))
             return;
 

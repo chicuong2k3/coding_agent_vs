@@ -220,7 +220,7 @@ The lockfile JSON schema (`pid`, `pidStartTime`, `workspaceFolders`, `ideName`, 
 
 1. Open a solution/project in VS 2026 (projects needed for diagnostics and semantic tools)
 2. **View > Other Windows > Claude Code** (also on Tools menu)
-3. Pick the agent from the panel's **Agent** dropdown (persisted across restarts), then click **Launch** — the CLI opens in VS's docked Terminal window, auto-connected
+3. Pick the agent from the panel's **Agent** dropdown (persisted across restarts), then click **Launch** — Claude Code opens in VS's docked Terminal window; OpenCode and Oh My Pi open in an external console (their full-screen TUIs render blank in the native terminal), auto-connected either way
 4. The panel pill turns green: **Connected**. No `/ide` needed.
 5. Ask the agent to make a change — Claude Code edits open as native VS diffs; OpenCode/omp edits go through the auto-deployed `docs/agents/` stub plugins (same VS diff), each auto-written into the agent's plugin dir on Launch
 

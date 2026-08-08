@@ -66,6 +66,14 @@ public sealed class AgentProfile
     public bool SupportsMcpRegistration { get; }
 
     /// <summary>
+    /// True for agents whose TUI can't render in VS's native Terminal tool window (full-screen
+    /// alternate-buffer TUIs come up as a blank screen there; Claude Code's inline TUI is fine).
+    /// Launch then goes straight to the external cmd.exe console, same as the "External console"
+    /// button.
+    /// </summary>
+    public bool PreferExternalConsole { get; }
+
+    /// <summary>
     /// True when the agent discovers and connects to the IDE WebSocket via a lockfile. False means the
     /// live WS notifications (selection_changed / at_mentioned) don't flow - instead the auto-deployed
     /// agent stub restores everything at prompt time: the diff gate, turn-end toasts, and a
@@ -104,6 +112,7 @@ public sealed class AgentProfile
         McpConfigFormat mcpFormat = McpConfigFormat.ClaudeMcpServers,
         bool supportsHooks = true,
         bool supportsMcpRegistration = true,
+        bool preferExternalConsole = false,
         string? limitations = null)
     {
         Id = id;
@@ -121,6 +130,7 @@ public sealed class AgentProfile
         McpFormat = mcpFormat;
         SupportsHooks = supportsHooks;
         SupportsMcpRegistration = supportsMcpRegistration;
+        PreferExternalConsole = preferExternalConsole;
         Limitations = limitations;
     }
 
@@ -158,11 +168,9 @@ public sealed class AgentProfile
         mcpConfigFileName: "opencode.json",
         mcpFormat: McpConfigFormat.OpenCodeMcp,
         supportsHooks: false,
-        limitations: "OpenCode has no shell-command hook system, so the extension auto-deploys its "
-            + "JS plugin (`.opencode/plugins/vs-diff-gate.js`) on Launch: the Accept/Reject diff gate, "
-            + "turn-end notifications, and break-state context injection (live debugger state appended "
-            + "to your prompt while paused) all work exactly like Claude Code's hooks. Selection, "
-            + "attachments, and the vs-debug / vs-semantic tools all work.");
+        // Full-screen TUI: blank in VS's native terminal -> external console. No limitations banner:
+        // the auto-deployed plugin restores full parity (diff gate, toasts, break-state injection).
+        preferExternalConsole: true);
 
     /// <summary>
     /// Oh My Pi (`omp`). No lockfile, no IDE WebSocket - its editor integration is stdio (ACP / RPC),
@@ -183,12 +191,10 @@ public sealed class AgentProfile
         // omp imports a workspace .mcp.json alongside its native .omp/mcp.json, so the Claude shape works.
         mcpConfigFileName: ".mcp.json",
         supportsHooks: false,
-        limitations: "Oh My Pi connects over stdio (ACP/RPC), not the IDE WebSocket, so the extension "
-            + "auto-deploys a `.omp/extensions/vs-diff-gate.ts` stub on Launch: the diff gate, turn-end "
-            + "toasts, and the push channels are all restored - before each turn the stub injects the "
-            + "live break state, your current selection, and newly staged attachments. Selection and "
-            + "attachments also remain reachable as pull tools (vs_get_selection / vs_list_attachments). "
-            + "The vs-debug / vs-semantic MCP tools work via its .mcp.json import.");
+        // Full-screen TUI: blank in VS's native terminal -> external console. No limitations banner:
+        // the auto-deployed stub restores full parity (diff gate, toasts, prompt-time push of break
+        // state/selection/attachments).
+        preferExternalConsole: true);
 
     /// <summary>Every agent the extension can launch, in picker order. Claude Code is index 0 = default.</summary>
     public static IReadOnlyList<AgentProfile> All { get; } = new[] { ClaudeCode, OpenCode, OhMyPi };
