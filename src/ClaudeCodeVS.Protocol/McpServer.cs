@@ -11,14 +11,18 @@ namespace ClaudeCodeVs.Protocol;
 /// </summary>
 public sealed class McpServer
 {
-    private const string ServerName = "claude-code-vs";
     private const string ServerVersion = "0.1.0";
     // Echoed back to the client when it offers one; CLI 2.1.x sends "2025-11-25".
     private const string DefaultProtocolVersion = "2025-06-18";
 
     private readonly ToolRegistry _tools;
+    private readonly string _serverName;
 
-    public McpServer(ToolRegistry tools) => _tools = tools;
+    public McpServer(ToolRegistry tools, string serverName = "claude-code-vs")
+    {
+        _tools = tools;
+        _serverName = serverName;
+    }
 
     /// <summary>Process one inbound frame. Returns response JSON to send, or null if no reply is due.</summary>
     public async Task<string?> HandleAsync(string json, CancellationToken ct)
@@ -59,7 +63,7 @@ public sealed class McpServer
         }
     }
 
-    private static JObject BuildInitializeResult(JObject? @params)
+    private JObject BuildInitializeResult(JObject? @params)
     {
         // Echo the client's protocolVersion when offered, so we never mismatch.
         string protocolVersion = (string?)@params?["protocolVersion"] ?? DefaultProtocolVersion;
@@ -70,7 +74,7 @@ public sealed class McpServer
             ["capabilities"] = new JObject { ["tools"] = new JObject() },
             ["serverInfo"] = new JObject
             {
-                ["name"] = ServerName,
+                ["name"] = _serverName,
                 ["version"] = ServerVersion,
             },
         };

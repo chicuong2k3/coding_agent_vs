@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.15.0 - 2026-08-08
+
+**Multi-agent groundwork** — the agent-specific surface is now one class, `AgentProfile` (`src/ClaudeCodeVS.Protocol/AgentProfile.cs`), with Claude Code as the default instance. Full analysis + coupling matrix: [`docs/MULTI-AGENT.md`](docs/MULTI-AGENT.md) (new).
+
+### Changes
+
+- **`AgentProfile`**: lockfile dir, CLI binary, env vars, auth-header name, MCP server name, config dir/settings/`.mcp.json` paths, plus `SupportsHooks`/`SupportsMcpRegistration` capability gates. `Lockfile`, `IdeWebSocketServer`, `McpServer`, both installers, and both launch paths (native terminal + external console) now take the profile; behavior for Claude Code is byte-identical. A second agent (Oh My Pi, OpenCode, …) is `new AgentProfile(...)` + swapping `BridgeHost._agent`.
+- **Manifest**: installation target opened from `[17.14,19.0)` to `[17.14,)` so future VS majors aren't blocked by the upper bound.
+
 ## 1.14.4 - 2026-07-31
 
 Three fixes straight from Marketplace feedback.

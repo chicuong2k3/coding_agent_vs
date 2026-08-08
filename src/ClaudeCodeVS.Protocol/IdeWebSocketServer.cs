@@ -16,7 +16,7 @@ namespace ClaudeCodeVs.Protocol;
 /// </summary>
 public sealed class IdeWebSocketServer
 {
-    private const string AuthHeader = "x-claude-code-ide-authorization";
+    private readonly string _authHeader; // per-agent header name (docs/MULTI-AGENT.md); Claude's by default
 
     private readonly int _port;
     private readonly string _authToken;
@@ -91,11 +91,12 @@ public sealed class IdeWebSocketServer
     /// </summary>
     public McpServer? SemanticMcp { get; set; }
 
-    public IdeWebSocketServer(int port, string authToken, McpServer mcp)
+    public IdeWebSocketServer(int port, string authToken, McpServer mcp, AgentProfile? agent = null)
     {
         _port = port;
         _authToken = authToken;
         _mcp = mcp;
+        _authHeader = (agent ?? AgentProfile.ClaudeCode).AuthHeader;
         _listener.Prefixes.Add($"http://127.0.0.1:{_port}/");
     }
 
@@ -133,7 +134,7 @@ public sealed class IdeWebSocketServer
         var remote = ctx.Request.RemoteEndPoint?.ToString() ?? "?";
 
         // 1) Auth at the HTTP upgrade - reject before any socket is created. Never log the token.
-        var presented = ctx.Request.Headers[AuthHeader];
+        var presented = ctx.Request.Headers[_authHeader];
         if (!string.Equals(presented, _authToken, StringComparison.Ordinal))
         {
             Log.Warn($"401 rejected upgrade from {remote} ({(presented is null ? "no" : "bad")} auth token)");

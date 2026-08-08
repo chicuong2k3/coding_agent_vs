@@ -24,6 +24,10 @@ internal sealed class BridgeHost : IDisposable
     private readonly CancellationTokenSource _cts = new();
     private readonly DiffDecisions _decisions = new(); // shared by openDiff and the permission gate
 
+    // The agent this bridge serves (docs/MULTI-AGENT.md). Fixed to Claude Code today; the launch +
+    // lockfile paths below are already parameterized on it, so a second agent is a new profile here.
+    private readonly AgentProfile _agent = AgentProfile.ClaudeCode;
+
     private VsOutputLog? _log;
     private Lockfile? _lockfile;
     private IdeWebSocketServer? _server;
@@ -60,18 +64,18 @@ internal sealed class BridgeHost : IDisposable
         Log.Info("Claude Code bridge starting…");
 
         // 2) Lockfile lifecycle: reap stale dead-PID files, then claim a free port. (build-plan §3)
-        Lockfile.ReapStale();
+        Lockfile.ReapStale(_agent);
         var folders = await GetWorkspaceFoldersAsync();
-        _lockfile = Lockfile.CreateForFreePort(folders);
+        _lockfile = Lockfile.CreateForFreePort(folders, _agent);
         Ui.BridgeStatus.SetEndpoint(_lockfile.Port, folders.Count > 0 ? folders[0] : null);
 
         // 3) Tool registry. The diff coordinator (_decisions) is shared between openDiff and the
         //    single-gate permission path.
         var tools = new ToolRegistry(BuildTools(_decisions));
-        var mcp = new McpServer(tools);
+        var mcp = new McpServer(tools, _agent.McpServerName);
 
         // 4) Start the localhost WS server on the claimed port.
-        _server = new IdeWebSocketServer(_lockfile.Port, _lockfile.AuthToken, mcp);
+        _server = new IdeWebSocketServer(_lockfile.Port, _lockfile.AuthToken, mcp, _agent);
 
         // Let the selection tracker push selection_changed over this server.
         Editor.SelectionService.Attach(_server, ThreadHelper.JoinableTaskFactory);
@@ -102,8 +106,8 @@ internal sealed class BridgeHost : IDisposable
                         var ws = await GetWorkspaceRootAsync();
                         if (!string.IsNullOrEmpty(ws))
                         {
-                            Hooks.PermissionHookInstaller.EnsureInstalled(ws!);
-                            Hooks.McpInstaller.EnsureInstalled(ws!);
+                            Hooks.PermissionHookInstaller.EnsureInstalled(ws!, _agent);
+                            Hooks.McpInstaller.EnsureInstalled(ws!, _agent);
                         }
                     }
                     catch (Exception e) { Log.Warn($"install-on-connect failed: {e.Message}"); }
@@ -533,17 +537,19 @@ internal sealed class BridgeHost : IDisposable
     /// Prefers VS's native docked Terminal; <paramref name="forceExternal"/> skips it for users who want
     /// a standalone console window (which, unlike the docked tab, survives closing VS).
     /// </summary>
-    public async Task LaunchClaudeAsync(bool forceExternal = false)
+    public Task LaunchClaudeAsync(bool forceExternal = false) => LaunchAgentAsync(_agent, forceExternal);
+
+    private async Task LaunchAgentAsync(AgentProfile agent, bool forceExternal)
     {
         if (_lockfile is null)
         {
-            Log.Warn("Launch Claude Code: bridge isn't running yet.");
+            Log.Warn($"Launch {agent.DisplayName}: bridge isn't running yet.");
             return;
         }
 
         // Reap zombie lockfiles (dead/recycled-PID instances) before launching, so the CLI's /ide and
         // our hooks see only live bridges. Our own lockfile is alive, so it's never reaped.
-        Lockfile.ReapStale();
+        Lockfile.ReapStale(agent);
 
         string? workspace = await GetWorkspaceRootAsync();
 
@@ -552,15 +558,15 @@ internal sealed class BridgeHost : IDisposable
         // Also register the debug PULL MCP server (.mcp.json + stdio shim) for Phase 2 pull-on-demand.
         if (!string.IsNullOrEmpty(workspace))
         {
-            Hooks.PermissionHookInstaller.EnsureInstalled(workspace!);
-            Hooks.McpInstaller.EnsureInstalled(workspace!);
+            Hooks.PermissionHookInstaller.EnsureInstalled(workspace!, agent);
+            Hooks.McpInstaller.EnsureInstalled(workspace!, agent);
         }
 
         // Prefer VS's own native Terminal tool window (undocumented, no NuGet package - see
         // Terminal/VsTerminalLauncher.cs). TryLaunchAsync never throws; on ANY failure it logs via
         // Log.Warn and returns false, so the external cmd.exe console below is always the safety net.
         if (!forceExternal &&
-            await Terminal.VsTerminalLauncher.TryLaunchAsync(workspace, _lockfile.Port, _cts.Token))
+            await Terminal.VsTerminalLauncher.TryLaunchAsync(workspace, _lockfile.Port, agent, _cts.Token))
             return;
 
         // Launch in DEFAULT permission mode. We tried --permission-mode acceptEdits to drop the CLI's
@@ -573,23 +579,23 @@ internal sealed class BridgeHost : IDisposable
         var psi = new ProcessStartInfo
         {
             FileName = "cmd.exe",
-            Arguments = "/K claude",                 // /K keeps the window open after claude exits
+            Arguments = $"/K {agent.Binary}",        // /K keeps the window open after the CLI exits
             UseShellExecute = false,                 // required to pass Environment below
             CreateNoWindow = false,                  // give it its own console window
         };
-        psi.Environment["ENABLE_IDE_INTEGRATION"] = "true";
-        psi.Environment["CLAUDE_CODE_SSE_PORT"] = _lockfile.Port.ToString();
+        foreach (var kv in agent.EnvironmentFor(_lockfile.Port))
+            psi.Environment[kv.Key] = kv.Value;
         if (!string.IsNullOrEmpty(workspace))
             psi.WorkingDirectory = workspace;
 
         try
         {
             Process.Start(psi);
-            Log.Info($"Launched Claude Code (port {_lockfile.Port}, cwd '{workspace ?? "(default)"}').");
+            Log.Info($"Launched {agent.DisplayName} (port {_lockfile.Port}, cwd '{workspace ?? "(default)"}').");
         }
         catch (Exception e)
         {
-            Log.Error($"Launch Claude Code failed: {e.Message}");
+            Log.Error($"Launch {agent.DisplayName} failed: {e.Message}");
         }
     }
 
