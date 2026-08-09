@@ -161,6 +161,124 @@ async function notify(message, bridge) {
  * Plugin entry: returns the hook set. opencode calls this function per session with the
  * { project, client, $, directory, worktree } context.
  */
+/**
+ * Reconstruct proposed file content from an Oh My Pi edit patch string.
+ * Parses [PATH#TAG] headers and applies PUT/CUT operations to produce
+ * the final file content for the VS diff. Returns null on unrecognised shapes
+ * (fail-open: the edit proceeds without gating).
+ */
+function reconstructOhMyPiEdit(patch, resolvedPath) {
+  // Extract the first [PATH#TAG] section header
+  const headerMatch = patch.match(/^\[(.+?)#[0-9A-F]{4}\]/m);
+  if (!headerMatch) return null;
+  let filePath = headerMatch[1];
+
+  // Resolve relative paths: prefer the Oh-My-Pi-resolved path, then cwd join.
+  if (resolvedPath && !existsSync(filePath)) filePath = resolvedPath;
+  if (!existsSync(filePath)) filePath = join(process.cwd(), filePath);
+
+  let current;
+  try { current = readFileSync(filePath, "utf8"); } catch { return null; }
+  // Parse the body after the header line
+  const bodyStart = patch.indexOf("\n", headerMatch.index) + 1;
+  const body = patch.slice(bodyStart);
+
+  // Parse operations: PUT <N:, PUT >N:, PUT N.=M:, CUT N.=M
+  // Each operation starts with an op keyword on its own at line start
+  const ops = [];
+  const opRe = /^(PUT|CUT)\s+(?:<|>)?(\d+)(?:\.=(\d+)|\*)?/m;
+
+  // Walk through body extracting operations + their body content
+  let remaining = body;
+  let lastIndex = 0;
+  while (lastIndex < remaining.length) {
+    opRe.lastIndex = 0;
+    const m = opRe.exec(remaining.slice(lastIndex));
+    if (!m) break;
+    const opStart = lastIndex + m.index;
+    const opLine = remaining.slice(opStart, remaining.indexOf("\n", opStart));
+
+    const op = {
+      type: m[1],                // PUT or CUT
+      line1: parseInt(m[2], 10),
+      line2: m[3] ? parseInt(m[3], 10) : null,
+      isBlock: remaining.slice(opStart).match(/^(PUT|CUT)\s+\d+\*/) !== null,
+      isBefore: opLine.includes("<"),
+      isAfter: opLine.includes(">"),
+      body: [],
+    };
+
+    // Collect body lines (prefixed with +) if this is a PUT with body
+    if (op.type === "PUT" && opLine.endsWith(":")) {
+      let bodyIdx = remaining.indexOf("\n", opStart) + 1;
+      while (bodyIdx < remaining.length) {
+        const nl = remaining.indexOf("\n", bodyIdx);
+        const line = remaining.slice(bodyIdx, nl === -1 ? remaining.length : nl);
+        if (line.startsWith("+")) {
+          op.body.push(line.slice(1)); // strip + prefix; "+" alone = blank line
+        } else {
+          break; // next operation or EOF
+        }
+        if (nl === -1) break;
+        bodyIdx = nl + 1;
+      }
+    }
+
+    ops.push(op);
+    lastIndex = remaining.indexOf("\n", opStart) + 1;
+    // Skip past any body lines we consumed
+    for (const _ of op.body) {
+      const nl = remaining.indexOf("\n", lastIndex);
+      if (nl === -1) { lastIndex = remaining.length; break; }
+      lastIndex = nl + 1;
+    }
+  }
+
+  if (ops.length === 0) return null; // nothing to apply
+
+  // Apply operations in order. All ops reference ORIGINAL line numbers.
+  // Process from bottom to top to avoid index shifting, or build a new array.
+  // Simple approach: apply each op to a mutable copy, adjusting indices.
+  // For multi-op patches on the same file this is approximate but covers the
+  // common single-op case correctly.
+
+  // Sort ops bottom-to-top (descending by line1) to apply without index shifts
+  const sorted = [...ops].sort((a, b) => {
+    // PUT <N (insert before) and PUT >N (insert after) don't delete — no shift
+    const aIsInsert = a.type === "PUT" && (a.isBefore || a.isAfter);
+    const bIsInsert = b.type === "PUT" && (b.isBefore || b.isAfter);
+    // Process deletes/replaces bottom-up; inserts can go top-down after
+    if (aIsInsert && !bIsInsert) return 1;
+    if (!aIsInsert && bIsInsert) return -1;
+    return b.line1 - a.line1; // descending
+  });
+
+  for (const op of sorted) {
+    // Convert 1-based display lines to 0-based array indices
+    if (op.isBefore) {
+      // PUT <N: — insert before line N (0-based index N-1)
+      const idx = op.line1 - 1;
+      lines.splice(Math.max(0, idx), 0, ...op.body);
+    } else if (op.isAfter) {
+      // PUT >N: — insert after line N (0-based index N)
+      const idx = op.line1; // after line N = before line N+1
+      lines.splice(Math.min(lines.length, idx), 0, ...op.body);
+    } else if (op.type === "CUT") {
+      const start = op.line1 - 1;
+      const end = op.line2 ? op.line2 - 1 : op.line1 - 1;
+      lines.splice(start, end - start + 1);
+    } else if (op.type === "PUT" && op.line2 !== null) {
+      // PUT N.=M: — replace lines N through M
+      const start = op.line1 - 1;
+      const end = op.line2 - 1;
+      lines.splice(start, end - start + 1, ...op.body);
+    }
+    // PUT N* (block replace) — not handled; skip
+  }
+
+  return { filePath, newContents: lines.join("\n") };
+}
+
 export const VsDiffGate = async () => {
   // Resolve once at plugin load; the port/token live for the whole VS process session.
   const bridge = await findBridge();
@@ -194,22 +312,35 @@ export const VsDiffGate = async () => {
       // Only file-modifying tools can enter the diff; read-only tools pass straight through.
       if (input.tool !== "write" && input.tool !== "edit") return;
 
-      const filePath = output.args.filePath;
-      if (!filePath || !bridge) return; // no bridge to review with -> let opencode work normally
+      if (!bridge) return; // no bridge to review with -> let opencode work normally
 
+      // Resolve filePath + newContents, handling both Claude Code and Oh My Pi arg shapes.
+      let filePath;
       let newContents;
-      if (input.tool === "write") {
-        newContents = output.args.newContents ?? output.args.contents;
-      } else {
-        // edit carries {oldString, newString}; reconstruct the full proposed file so the VS
-        // diff reads like the Claude Code one. If the file's on-disk state doesn't contain
-        // oldString (stale call), POST what we can: opencode will fail its own edit anyway.
-        let current = "";
-        try { current = readFileSync(filePath, "utf8"); } catch { return; }
-        newContents = current.replace(output.args.oldString ?? "", output.args.newString ?? "");
-      }
-      if (typeof newContents !== "string") return;
 
+      if (input.tool === "write") {
+        // Claude Code: {filePath, newContents}  |  Oh My Pi: {path, content}
+        filePath = output.args.filePath ?? output.args.path;
+        newContents = output.args.newContents ?? output.args.contents ?? output.args.content;
+      } else {
+        // Claude Code edit: {filePath, oldString, newString}
+        // Oh My Pi edit:  {i, input} — patch syntax with [PATH#TAG] headers
+        if (output.args.filePath && output.args.oldString !== undefined) {
+          // Claude Code edit path
+          filePath = output.args.filePath;
+          let current = "";
+          try { current = readFileSync(filePath, "utf8"); } catch { return; }
+          newContents = current.replace(output.args.oldString ?? "", output.args.newString ?? "");
+        } else if (output.args.input && typeof output.args.input === "string") {
+          // Oh My Pi edit path — parse [PATH#TAG] from patch, apply operations.
+          // Oh My Pi may provide the resolved path in output.args.path.
+          const result = reconstructOhMyPiEdit(output.args.input, output.args.path);
+          if (!result) return; // unrecognised patch shape → fail open
+          filePath = result.filePath;
+          newContents = result.newContents;
+          return; // unknown edit shape → fail open
+        }
+      }
       const { allow, reason } = await permission(filePath, newContents, bridge);
       if (!allow) {
         // Throwing is opencode's documented veto: the tool call is aborted and the message

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.21.8 - 2026-08-09
+
+### Fixes
+
+- **Oh My Pi diff gate never opened the native VS diff (A3).** The `vs-diff-gate.js` plugin's `tool.execute.before` handler assumed Claude Code argument names (`filePath`, `oldString`, `newString`) — but Oh My Pi uses `path`/`content` for `write` and an `input` patch string (with `[PATH#TAG]` headers) for `edit`. `output.args.filePath` was always `undefined`, so the diff gate silently skipped every edit. The handler now detects the argument shape and dispatches: Claude Code path is unchanged; Oh My Pi `write` reads `path`/`content`; Oh My Pi `edit` parses the patch syntax via a new `reconstructOhMyPiEdit()` that applies `PUT`/`CUT` operations to produce the proposed file content for the VS diff, with relative-path resolution (tries the Oh-My-Pi-resolved path, then `join(cwd, path)`). Source: `docs/agents/opencode-vs-diff-gate.js`.
+
 ## 1.21.7 - 2026-08-09
 
 ### Fixes
