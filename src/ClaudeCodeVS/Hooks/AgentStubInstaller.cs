@@ -7,25 +7,23 @@ namespace ClaudeCodeVs.Hooks;
 
 /// <summary>
 /// Auto-deploys the per-agent diff-gate/no:stub plugins into the workspace on Launch, so
-/// opencode and Oh My Pi get the same Accept/Reject diff gate + turn-end toasts as Claude Code
-/// without any manual copying (the docs/agents/ stubs are the source of truth; this shoves the
-/// embedded copies into each agent's auto-loaded plugin/extensions dir).
+/// Oh My Pi gets the same Accept/Reject diff gate + turn-end toasts as Claude Code without any
+/// manual copying (the docs/agents/ stubs are the source of truth; this shoves the embedded
+/// copies into each agent's auto-loaded plugin/extensions dir).
 ///
-/// - opencode:  &lt;workspace&gt;\.opencode\plugins\   (every .js/.ts there is loaded at startup)
 /// - oh-my-pi:  &lt;workspace&gt;\.omp\extensions\     (auto-discovered project-local extensions)
 ///
 /// Only runs for agents that ship a stub (no shell hooks of their own): Claude Code is never
 /// touched. Idempotent and best-effort - never throws into the launch path. The write is
-/// content-checked, so repeated launches don't churn the file (which would re-trigger
-/// opencode's plugin reload).
+/// content-checked, so repeated launches don't churn the file (which would re-trigger the
+/// agent's extension reload).
 /// </summary>
 internal static class AgentStubInstaller
 {
     // Agent id -> (embedded resource suffix, relative write path). omp's project-local dir is
-    // .omp/extensions/ per pi's extension docs; opencode's is .opencode/plugins/.
+    // .omp/extensions/ per pi's extension docs.
     private static readonly (string AgentId, string Resource, string RelativePath)[] Stubs =
     {
-        ("opencode", "opencode-vs-diff-gate.js", Path.Combine(".opencode", "plugins", "vs-diff-gate.js")),
         ("oh-my-pi", "omp-vs-diff-gate.ts", Path.Combine(".omp", "extensions", "vs-diff-gate.ts")),
     };
 
@@ -43,7 +41,7 @@ internal static class AgentStubInstaller
             var content = ReadEmbeddedStub(stub.Resource);
 
             // Content-checked write: don't touch an already-deployed (possibly user-edited) copy,
-            // and don't re-trigger opencode's plugin watcher on every launch.
+            // and don't re-trigger the agent's plugin watcher on every launch.
             if (File.Exists(target) &&
                 string.Equals(File.ReadAllText(target), content, StringComparison.Ordinal))
             {
@@ -69,7 +67,7 @@ internal static class AgentStubInstaller
             throw new InvalidOperationException($"embedded stub not found: {stubFileName}");
 
         // Guard against a duplicate match (e.g. embedded via Link with the same tail): the stub
-        // names are unique (opencode-vs-diff-gate.js / omp-vs-diff-gate.ts suffix).
+        // names are unique (omp-vs-diff-gate.ts suffix).
         using var stream = asm.GetManifestResourceStream(name)!;
         using var reader = new StreamReader(stream);
         return reader.ReadToEnd();

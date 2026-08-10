@@ -86,10 +86,10 @@ public sealed class IdeWebSocketServer
 
     /// <summary>
     /// Raised on each POST /agent-heartbeat (body {agent, bye?}) from a per-agent stub. Agents that
-    /// never open the IDE WebSocket (omp) - or connect late (opencode) - have no ConnectionChanged
-    /// signal, so their stubs beat every ~10s while the CLI is alive; the VSIX greens the panel pill
-    /// on the first beat and greys it when beats stop (and no WS client is attached). bye=true is an
-    /// explicit shutdown (omp's session_shutdown) for an instant grey. Args: (displayName, bye).
+    /// never open the IDE WebSocket (omp) have no ConnectionChanged signal, so their stubs beat every
+    /// ~10s while the CLI is alive; the VSIX greens the panel pill on the first beat and greys it when
+    /// beats stop (and no WS client is attached). bye=true is an explicit shutdown (omp's
+    /// session_shutdown) for an instant grey. Args: (displayName, bye).
     /// </summary>
     public event Action<string, bool>? AgentHeartbeat;
 

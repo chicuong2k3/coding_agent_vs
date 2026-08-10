@@ -6,11 +6,8 @@ namespace ClaudeCodeVs.Protocol;
 /// </summary>
 public enum McpConfigFormat
 {
-    /// <summary>Claude Code's <c>.mcp.json</c>: <c>{"mcpServers":{"name":{"type":"stdio","command":…,"args":[…]}}}</c>.</summary>
+    /// <summary>Claude Code's <c>.mcp.json</c>: <c>{"mcpServers":{"name":{"type":"stdio","command":…,"args":[…]}}}</c>. Also the shape Oh My Pi imports via a workspace <c>.mcp.json</c>.</summary>
     ClaudeMcpServers,
-
-    /// <summary>opencode's <c>opencode.json</c>: <c>{"mcp":{"name":{"type":"local","command":[argv…],"enabled":true}}}</c>.</summary>
-    OpenCodeMcp,
 }
 
 /// <summary>
@@ -146,33 +143,6 @@ public sealed class AgentProfile
         fixedEnv: new Dictionary<string, string> { ["ENABLE_IDE_INTEGRATION"] = "true" });
 
     /// <summary>
-    /// opencode. It is already a client of the SAME IDE contract: it scans <c>~/.claude/ide/*.lock</c>,
-    /// presents <c>x-claude-code-ide-authorization</c>, and speaks MCP <c>2025-11-25</c> - so it connects
-    /// to our existing socket with no protocol work. It consumes the <c>selection_changed</c> and
-    /// <c>at_mentioned</c> notifications. It has no shell-command hook system (its equivalent is a JS
-    /// plugin), so the diff gate, turn-end toasts, AND break-state context injection (the plugin's
-    /// <c>chat.message</c> hook appends the live debugger state when VS is paused) all ride the
-    /// auto-deployed <c>.opencode/plugins/vs-diff-gate.js</c> instead of hooks. MCP registration uses
-    /// opencode.json's own shape.
-    /// </summary>
-    public static AgentProfile OpenCode { get; } = new(
-        id: "opencode",
-        displayName: "OpenCode",
-        binary: "opencode",
-        // Its lockfile scan is hardcoded to the legacy ~/.claude/ide path, same as ours - so one
-        // lockfile serves both agents and no second file is written.
-        ideDir: ClaudeCode.IdeDir,
-        portEnvVar: "OPENCODE_EDITOR_SSE_PORT",
-        configDirName: ".opencode",
-        settingsFileName: "opencode.json",
-        mcpConfigFileName: "opencode.json",
-        mcpFormat: McpConfigFormat.OpenCodeMcp,
-        supportsHooks: false,
-        // Full-screen TUI: blank in VS's native terminal -> external console. No limitations banner:
-        // the auto-deployed plugin restores full parity (diff gate, toasts, break-state injection).
-        preferExternalConsole: true);
-
-    /// <summary>
     /// Oh My Pi (`omp`). No lockfile, no IDE WebSocket - its editor integration is stdio (ACP / RPC),
     /// which our in-proc bridge can't host. What it DOES have is an MCP client that imports a workspace
     /// <c>.mcp.json</c>, so the whole pull surface (debugger, semantic, tests, capture) ports as-is,
@@ -197,7 +167,7 @@ public sealed class AgentProfile
         preferExternalConsole: true);
 
     /// <summary>Every agent the extension can launch, in picker order. Claude Code is index 0 = default.</summary>
-    public static IReadOnlyList<AgentProfile> All { get; } = new[] { ClaudeCode, OpenCode, OhMyPi };
+    public static IReadOnlyList<AgentProfile> All { get; } = new[] { ClaudeCode, OhMyPi };
 
     /// <summary>Look an agent up by <see cref="Id"/>, falling back to <see cref="ClaudeCode"/>.</summary>
     public static AgentProfile ById(string? id) =>

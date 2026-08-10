@@ -1,6 +1,6 @@
 # Multi-Agent Architecture: Where to Generalize
 
-Status: analysis for future work. This documents the current architecture and identifies every Claude Code coupling point, so supporting Oh My Pi, OpenCode, and other agents is a mechanical exercise rather than a re-architecture.
+Status: analysis for future work. This documents the current architecture and identifies every Claude Code coupling point, so supporting Oh My Pi and other agents is a mechanical exercise rather than a re-architecture.
 
 ---
 
@@ -123,7 +123,7 @@ This defeats: zombie lockfiles (dead process, port doesn't answer), recycled PID
 | Component | File(s) | Coupling | Generalization strategy |
 |---|---|---|---|
 | **Lockfile path** | `Lockfile.cs` | `~/.claude/ide/<port>.lock` | ✅ Done — `AgentProfile.IdeDir`, passed to `CreateForFreePort`/`ReapStale` |
-| **Lockfile schema** | `Lockfile.cs` | `ideName`, `transport: "ws"`, `authToken`, `workspaceFolders`, `runningInWindows` | ✅ Kept — this IS the shared multi-agent contract now: opencode reads the same file/fields, and the bridge writes one lockfile per DISTINCT discovery dir (see "The lockfile is now a SHARED multi-agent contract" above) |
+| **Lockfile schema** | `Lockfile.cs` | `ideName`, `transport: "ws"`, `authToken`, `workspaceFolders`, `runningInWindows` | ✅ Kept — this IS the shared multi-agent contract now (see "The lockfile is now a SHARED multi-agent contract" above) |
 | **WS subprotocol** | `IdeWebSocketServer.cs` | MUST echo `Sec-WebSocket-Protocol: mcp` | ✅ Already dynamic — echoes whatever subprotocol the client offers |
 | **Auth header** | `IdeWebSocketServer.cs` | `x-claude-code-ide-authorization` | ✅ Done — server accepts ANY registered `AgentProfile.AuthHeader`; one token gates all |
 | **MCP protocol version** | `McpServer.cs:17` | `2025-11-25` (echoed from client) | Already dynamic — echoes client's version |
@@ -173,7 +173,7 @@ IAgentProtocol
 Current state: everything is hardcoded for Claude Code. The refactoring would:
 1. Extract each agent-specific piece behind an interface
 2. Implement `ClaudeCodeProtocol` as one concrete implementation (current behavior)
-3. Add `OhMyPiProtocol`, `OpenCodeProtocol`, etc. as new implementations
+3. Add `OhMyPiProtocol`, etc. as new implementations
 4. Let `BridgeHost` select a protocol based on a registry or startup parameter
 
 The `IIdeTool` / `McpServer` / tool implementations remain untouched — they're the agent-agnostic core.
@@ -188,19 +188,18 @@ The `IIdeTool` / `McpServer` / tool implementations remain untouched — they're
 - **Capability gates:** `SupportsHooks`, `SupportsMcpRegistration` — agents without those systems skip the installs cleanly
 - **Selection:** `All`, `ById`, `LoadSelected`/`SaveSelected` — the panel's agent picker persists the Launch target in `%LOCALAPPDATA%` (a preference, not a safety gate)
 
-**The bridge serves every agent at once** (one port, one auth token, a lockfile in each distinct discovery dir — Claude Code and opencode share `~/.claude/ide`, so one file; the WS server accepts any registered auth header). The picker only decides which CLI `Launch` spawns. Three agents are shipped:
+**The bridge serves every agent at once** (one port, one auth token, a lockfile in each distinct discovery dir; the WS server accepts any registered auth header). The picker only decides which CLI `Launch` spawns. Two agents are shipped:
 
 | Agent | Profile | Channels | Diff gate |
 |---|---|---|---|
 | Claude Code | `AgentProfile.ClaudeCode` | WS IDE + hooks + .mcp.json | ✅ PreToolUse hook → native VS diff |
-| OpenCode | `AgentProfile.OpenCode` | WS IDE (same lockfile/header/MCP 2025-11-25) + opencode.json MCP | ✅ Auto-deployed plugin — `.opencode/plugins/vs-diff-gate.js` written on Launch (diff gate + turn-end toasts + break-state injection via its `chat.message` hook → `/debug-context`) |
 | Oh My Pi (`omp`) | `AgentProfile.OhMyPi` | .mcp.json MCP import only (stdio, no WS) | ✅ Auto-deployed extension — `.omp/extensions/vs-diff-gate.ts` written on Launch (diff gate + turn-end toasts + prompt-time push: `before_agent_start` → `/agent-context` injects break state, current selection, and newly staged attachments; selection/attachments also as pull tools `vs_get_selection` / `vs_list_attachments`) |
 
 Deliberately NOT abstracted (wait for a real second agent's hook/transport contract): the hook event names + ps1 script contract and the `.mcp.json` entry format — each is either the shared IDE-protocol contract itself or gated off by the capability flags.
 
 ### The lockfile is now a SHARED multi-agent contract
 
-The lockfile JSON schema (`pid`, `pidStartTime`, `workspaceFolders`, `ideName`, `transport`, `runningInWindows`, `authToken`) is no longer Claude-only internals: **opencode is a consumer of the same file** — it scans the same `~/.claude/ide/*.lock` directory, filters the same `ideName`, and presents the same `authToken` header. Treat schema changes as breaking for every agent, and document them here.
+The lockfile JSON schema (`pid`, `pidStartTime`, `workspaceFolders`, `ideName`, `transport`, `runningInWindows`, `authToken`) is the shared discovery contract for any agent with lockfile-based IDE discovery. Currently only Claude Code consumes it (any agent scanning the same `~/.claude/ide/*.lock` directory, filtering the same `ideName`, and presenting the same `authToken` header would share it). Treat schema changes as breaking for every consumer, and document them here.
 
 ---
 
@@ -220,9 +219,9 @@ The lockfile JSON schema (`pid`, `pidStartTime`, `workspaceFolders`, `ideName`, 
 
 1. Open a solution/project in VS 2026 (projects needed for diagnostics and semantic tools)
 2. **View > Other Windows > Claude Code** (also on Tools menu)
-3. Pick the agent from the panel's **Agent** dropdown (persisted across restarts), then click **Launch** — Claude Code opens in VS's docked Terminal window; OpenCode and Oh My Pi open in an external console (their full-screen TUIs render blank in the native terminal), auto-connected either way
+3. Pick the agent from the panel's **Agent** dropdown (persisted across restarts), then click **Launch** — Claude Code opens in VS's docked Terminal window; Oh My Pi opens in an external console (its full-screen TUI renders blank in the native terminal), auto-connected either way
 4. The panel pill turns green: **Connected**. No `/ide` needed.
-5. Ask the agent to make a change — Claude Code edits open as native VS diffs; OpenCode/omp edits go through the auto-deployed `docs/agents/` stub plugins (same VS diff), each auto-written into the agent's plugin dir on Launch
+5. Ask the agent to make a change — Claude Code edits open as native VS diffs; Oh My Pi edits go through the auto-deployed `docs/agents/` stub plugin (same VS diff), auto-written into its plugin dir on Launch
 
 ### Panel Controls
 

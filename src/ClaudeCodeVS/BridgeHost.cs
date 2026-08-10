@@ -47,11 +47,10 @@ internal sealed class BridgeHost : IDisposable
     private CancellationTokenSource? _mcpGraceCts;
     private volatile bool _mcpEverSeen;
 
-    // Connected-pill state for agents WITHOUT a live IDE WebSocket (omp always, opencode until/unless
-    // it attaches). Their stubs POST /agent-heartbeat every ~10s; the pill is green while EITHER a WS
-    // client is attached OR a heartbeat is fresh. HTTP has no disconnect, so a sweep timer greys the
-    // pill once beats stop (≤ ~40s after the CLI dies; omp also sends an explicit bye on shutdown for
-    // an instant grey). ponytail: one sliding window, no per-agent registry - the pill is a bool.
+    // Connected-pill state for agents WITHOUT a live IDE WebSocket (omp always). Their stubs POST
+    // /agent-heartbeat every ~10s; the pill is green while EITHER a WS client is attached OR a
+    // heartbeat is fresh. HTTP has no disconnect, so a sweep timer greys the pill once beats stop
+    // (≤ ~40s after the CLI dies; omp also sends an explicit bye on shutdown for an instant grey). ponytail: one sliding window, no per-agent registry - the pill is a bool.
     private static readonly TimeSpan HeartbeatTtl = TimeSpan.FromSeconds(30);
     private bool _wsConnected;
     private DateTime _lastBeatUtc = DateTime.MinValue;
@@ -93,7 +92,7 @@ internal sealed class BridgeHost : IDisposable
         var mcp = new McpServer(tools);
 
         // 4) Start the localhost WS server on the claimed port. Authenticates any agent's auth header
-        //    (Claude Code and opencode both present x-claude-code-ide-authorization) against the SAME
+        //    (every registered profile presents x-claude-code-ide-authorization) against the SAME
         //    token, so one server serves every agent attached to this lockfile.
         _server = new IdeWebSocketServer(_lockfile.Port, _lockfile.AuthToken, mcp, AgentProfile.All);
 
@@ -685,7 +684,7 @@ internal sealed class BridgeHost : IDisposable
         // Auto-install the single-gate PreToolUse hook into the workspace so accepting/rejecting our
         // diff is the sole edit gate (no terminal prompt). Best-effort; idempotent; safe to re-run.
         // Also register the debug PULL MCP server (.mcp.json + stdio shim) for Phase 2 pull-on-demand,
-        // and auto-deploy the per-agent diff-gate stub (opencode/omp only - Claude needs neither).
+        // and auto-deploy the per-agent diff-gate stub (omp only - Claude needs neither).
         if (!string.IsNullOrEmpty(workspace))
         {
             Hooks.PermissionHookInstaller.EnsureInstalled(workspace!, agent);
@@ -696,8 +695,8 @@ internal sealed class BridgeHost : IDisposable
         // Prefer VS's own native Terminal tool window (undocumented, no NuGet package - see
         // Terminal/VsTerminalLauncher.cs). TryLaunchAsync never throws; on ANY failure it logs via
         // Log.Warn and returns false, so the external cmd.exe console below is always the safety net.
-        // Agents with PreferExternalConsole (opencode/omp: full-screen TUIs that render blank in the
-        // native terminal) skip straight to the external console.
+        // Agents with PreferExternalConsole (omp: full-screen TUI that renders blank in the native
+        // terminal) skip straight to the external console.
         if (agent.PreferExternalConsole && !forceExternal)
             Log.Info($"{agent.DisplayName}: full-screen TUI - launching in the external console.");
         else if (!forceExternal &&

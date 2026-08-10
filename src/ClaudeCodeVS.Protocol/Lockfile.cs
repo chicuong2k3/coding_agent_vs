@@ -19,7 +19,7 @@ public sealed class Lockfile
 
     /// <summary>
     /// Every path this lockfile was written to - one per DISTINCT agent IdeDir. Agents that share a
-    /// discovery directory (Claude Code and opencode both read <c>~/.claude/ide</c>) share one file, so
+    /// discovery directory (all registered profiles read <c>~/.claude/ide</c>) share one file, so
     /// this is usually a single entry.
     /// </summary>
     public IReadOnlyList<string> Paths { get; }
@@ -173,8 +173,8 @@ public sealed class Lockfile
         agents is { Count: > 0 } ? agents : new[] { AgentProfile.ClaudeCode };
 
     /// <summary>
-    /// The discovery directories to write/reap, de-duplicated case-insensitively - Claude Code and
-    /// opencode both point at <c>~/.claude/ide</c>, and writing that file twice would be pointless.
+    /// The discovery directories to write/reap, de-duplicated case-insensitively - every agent with
+    /// lockfile discovery points at <c>~/.claude/ide</c>, and writing that file twice would be pointless.
     /// </summary>
     private static IReadOnlyList<string> DistinctIdeDirs(IReadOnlyList<AgentProfile> agents)
     {

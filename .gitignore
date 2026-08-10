@@ -7,9 +7,7 @@ obj/
 .claude/
 .mcp.json
 
-# opencode / omp runtime (stubs + MCP config written by the extension on Launch; same class as .claude/)
-.opencode/
-opencode.json
+# omp runtime (stubs + MCP config written by the extension on Launch; same class as .claude/)
 .omp/
 
 # VS solution-upgrade logs

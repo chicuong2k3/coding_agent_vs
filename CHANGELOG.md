@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.22.0 - 2026-08-10
+
+### Changes
+
+- **OpenCode support removed.** The OpenCode agent profile (`AgentProfile.OpenCode`), its auto-deployed `.opencode/plugins/vs-diff-gate.js` diff-gate plugin, the opencode-specific `opencode.json` MCP registration format, the embedded stub resource, and the workspace-level `opencode.json` / `.opencode/` runtime files are gone. Claude Code and Oh My Pi (omp) are unaffected: the bridge, hooks, `vs-debug`/`vs-semantic` MCP servers, and the omp diff-gate/context-injection stubs all work exactly as before. The panel's agent picker now offers Claude Code and Oh My Pi only; a persisted `opencode` selection falls back to Claude Code on the next start.
+
 ## 1.21.8 - 2026-08-09
 
 ### Fixes

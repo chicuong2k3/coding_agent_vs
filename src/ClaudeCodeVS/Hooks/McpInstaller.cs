@@ -43,8 +43,7 @@ internal static class McpInstaller
             // Where the shim lives. Agents that register into CLAUDE'S OWN .mcp.json (same file, same
             // ClaudeMcpServers shape - Oh My Pi imports a workspace .mcp.json wholesale) reuse Claude's
             // config dir, so the entry they write is byte-identical to Claude's: installing both agents
-            // never flips the file back and forth. Agents with their own config file (opencode.json)
-            // get their own dir.
+            // never flips the file back and forth.
             var shimDir = agent.McpConfigFileName == AgentProfile.ClaudeCode.McpConfigFileName
                           && agent.McpFormat == AgentProfile.ClaudeCode.McpFormat
                 ? AgentProfile.ClaudeCode.ConfigDirName
@@ -75,12 +74,12 @@ internal static class McpInstaller
                 root = new JObject();
             }
 
-            // Where the server map lives differs per agent: Claude's .mcp.json nests under "mcpServers",
-            // opencode.json under "mcp". Only assign when creating: re-assigning an already-parented
-            // JToken makes Json.NET CLONE it into the parent, detaching this local reference - upserts
-            // would then never reach the file (same bug as the hook installer; matters for users
-            // upgrading with an existing config).
-            string mapKey = agent.McpFormat == McpConfigFormat.OpenCodeMcp ? "mcp" : "mcpServers";
+            // The server map lives under "mcpServers" (Claude's .mcp.json; also the shape Oh My Pi
+            // imports). Only assign when creating: re-assigning an already-parented JToken makes
+            // Json.NET CLONE it into the parent, detaching this local reference - upserts would then
+            // never reach the file (same bug as the hook installer; matters for users upgrading with
+            // an existing config).
+            const string mapKey = "mcpServers";
             if (root[mapKey] is not JObject servers)
             {
                 servers = new JObject();
@@ -140,19 +139,6 @@ internal static class McpInstaller
         if (!string.Equals(agent.AuthHeader, AgentProfile.ClaudeCode.AuthHeader, StringComparison.OrdinalIgnoreCase))
         {
             tail.Add("-AuthHeader"); tail.Add(agent.AuthHeader);
-        }
-
-        if (agent.McpFormat == McpConfigFormat.OpenCodeMcp)
-        {
-            // opencode.json: `command` is the whole argv array, and entries carry an explicit enabled flag.
-            var argv = new JArray("powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script);
-            foreach (var a in tail) argv.Add(a);
-            return new JObject
-            {
-                ["type"] = "local",
-                ["command"] = argv,
-                ["enabled"] = true,
-            };
         }
 
         var args = new JArray("-NoProfile", "-ExecutionPolicy", "Bypass", "-File", script);
